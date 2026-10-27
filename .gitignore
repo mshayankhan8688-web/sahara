@@ -1,0 +1,9 @@
+﻿node_modules/
+dist/
+.vercel/
+data/
+.env
+.env.local
+.env.production
+*.tsbuildinfo
+.DS_Store
