@@ -18,6 +18,7 @@ import { User } from "../models/User.js";
 import { requireUser } from "../middleware/auth.js";
 import { authLimiter } from "../middleware/limits.js";
 import { validateBody } from "../middleware/validate.js";
+import { parseAvatar } from "../lib/attachment.js";
 import { deleteSchema, forgotSchema, locationSchema, loginSchema, passwordSchema, profileSchema, registerSchema, resetSchema } from "../lib/schemas.js";
 import { sendResetCode } from "../services/resetDelivery.js";
 
@@ -30,17 +31,30 @@ function publicUser(user: {
   email?: string | null;
   phone?: string | null;
   createdAt?: Date;
+  planTier?: string | null;
+  planExpiresAt?: Date | null;
+  avatar?: { mimeType?: string | null; data?: string | null } | null;
   savedLocation?: { label?: string | null; latitude?: number | null; longitude?: number | null } | null;
 }) {
   const location = user.savedLocation?.label
     ? { label: user.savedLocation.label, hasCoordinates: typeof user.savedLocation.latitude === "number" }
     : null;
+  const avatar =
+    user.avatar?.mimeType && user.avatar?.data
+      ? { mimeType: user.avatar.mimeType, data: user.avatar.data }
+      : null;
+  const premiumActive =
+    user.planTier === "premium" &&
+    (!user.planExpiresAt || user.planExpiresAt.getTime() > Date.now());
   return {
     id: user.id ?? user._id.toString(),
     name: user.name,
     email: user.email ?? "",
     phone: user.phone ?? null,
     createdAt: user.createdAt,
+    planId: premiumActive ? "premium" : "free",
+    planExpiresAt: user.planExpiresAt ?? null,
+    avatar,
     savedLocation: location,
   };
 }
@@ -138,12 +152,22 @@ authRouter.post(
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
     try {
-      await sendResetCode(identifier.channel, identifier.destination, code);
+      const delivery = await sendResetCode(identifier.channel, identifier.destination, code);
+      if (delivery === "local") {
+        res.json({
+          message:
+            "Email/SMS is not configured on this server. Use the local development code below. It expires in 10 minutes.",
+          channel: identifier.channel,
+          delivery: "local",
+          localCode: code,
+        });
+        return;
+      }
+      res.json({ message: sent, channel: identifier.channel, delivery });
     } catch (error) {
       await PasswordReset.deleteMany({ userId: user._id });
       throw error;
     }
-    res.json({ message: sent, channel: identifier.channel });
   }),
 );
 
@@ -214,6 +238,11 @@ authRouter.patch(
       current.set("email", undefined);
     }
     current.name = req.body.name;
+    if (req.body.clearAvatar) {
+      current.set("avatar", null);
+    } else if (req.body.avatar) {
+      current.avatar = parseAvatar(req.body.avatar);
+    }
     await current.save();
     res.json({ user: publicUser(current) });
   }),

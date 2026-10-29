@@ -4,7 +4,7 @@ SAHARA is the everyday AI assistant in `frontend/` and `backend/`. The Swazz int
 
 The public website, Google Play, and the App Store are not published. Do not treat a local URL as a store listing.
 
-Accounts, chats, journals, tasks, plans, and preferences live in MongoDB. Replies come from Google Gemini. Restaurant cards come from Google Places when `GOOGLE_PLACES_API_KEY` is set, and otherwise from OpenStreetMap. Missing fields stay blank. Nothing is filled in with sample restaurants or scripted AI replies.
+Accounts, chats, journals, tasks, plans, and preferences live in MongoDB. Replies come from Google Gemini. The product UI is AI-focused: chat, study, day plan, career, food ideas, journal, companion, preferences, and feedback. Food ideas are general meal suggestions from Gemini, not restaurant search.
 
 There is no public URL yet. Deployment below is the path to create one. It has not been run from this project.
 
@@ -46,19 +46,6 @@ Open http://localhost:5173. Choose **Start Chatting**, create an account, and si
 
 Chat text, and a journal entry only after **Share with AI**, is sent to Google to generate the reply. Availability and cost depend on your Gemini plan.
 
-## Restaurant search
-
-1. In Google Cloud, enable **Places API (New)** and billing.
-2. Create an API key restricted to that API.
-3. Set `GOOGLE_PLACES_API_KEY` in `backend/.env`.
-4. Restart the API.
-
-Searches send the food query and, when you allow it, coordinates to Google. The site shows only fields Google returns. Halal status, allergens, and medical suitability are not verified.
-
-### Location permission
-
-On **Restaurants** or in chat, choose **Find restaurants near me** or **Use my location once**. The browser asks once. Deny it and type a city instead, for example `Gulberg, Lahore`. Precise coordinates are stored only if you tick **Save precise location**.
-
 ## Deploy
 
 Frontend on Vercel:
@@ -84,7 +71,7 @@ Chat can use the browser microphone and read a reply aloud. That is not a live p
 
 ## Mobile
 
-Android and iOS builds are not generated in this repository. A later Capacitor wrap can reuse this Vite app: install `@capacitor/core` and `@capacitor/cli` inside `frontend`, run `npx cap init SAHARA app.sahara.life --web-dir dist`, then `npx cap add android` and `npx cap add ios` on a Mac for iOS. Microphone and location still need the platform permission prompts. This has not been run here.
+Android and iOS builds are not generated in this repository. A later Capacitor wrap can reuse this Vite app: install `@capacitor/core` and `@capacitor/cli` inside `frontend`, run `npx cap init SAHARA app.sahara.life --web-dir dist`, then `npx cap add android` and `npx cap add ios` on a Mac for iOS. Microphone permission still needs the platform prompt. This has not been run here.
 
 ## Tests
 
@@ -93,4 +80,4 @@ cd backend
 npm test
 ```
 
-The suite checks registration, private journals, missing Gemini, missing Places, and signed-out access. It uses an in-memory MongoDB and does not call Google.
+The suite checks registration, private journals, missing Gemini, and signed-out access. It uses an in-memory MongoDB and does not call Google.

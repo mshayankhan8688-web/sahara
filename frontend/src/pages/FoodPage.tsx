@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { readReplyLanguage } from "@/lib/replyLanguage";
 import { AiReply, Alert, Button, PageHeader } from "@/components/ui";
@@ -35,8 +34,8 @@ export function FoodPage() {
     <div className="h-full overflow-auto px-4 py-6 sm:px-8">
       <PageHeader
         eyebrow="Ideas, not a menu"
-        title="Food finder"
-        body="Gemini can suggest what to eat. It will not name a restaurant unless you run a real search."
+        title="Food ideas"
+        body="Ask Gemini what to eat. Replies are general meal suggestions, not restaurant search."
       />
       <div className="flex max-w-2xl flex-wrap gap-2">
         {chips.map((chip) => (
@@ -53,12 +52,6 @@ export function FoodPage() {
         <Button type="button" onClick={() => void ask()} disabled={pending || note.trim().length === 0}>
           {pending ? "Asking Gemini…" : "Suggest food"}
         </Button>
-        <Link
-          to={`/app/restaurants?query=${encodeURIComponent(note)}`}
-          className="inline-flex items-center justify-center rounded-full border border-line px-4 py-2.5 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          Search real restaurants
-        </Link>
       </div>
       {error ? <div className="mt-4 max-w-2xl"><Alert>{error}</Alert></div> : null}
       {reply ? (

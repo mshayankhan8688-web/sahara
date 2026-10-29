@@ -1,4 +1,16 @@
-import type { ChatMessage, Companion, Conversation, Health, JournalEntry, PlaceMatch, Preferences, Restaurant, SavedPlan, Task, User } from "@/lib/types";
+import type {
+  BillingPlansResponse,
+  ChatMessage,
+  Companion,
+  Conversation,
+  Health,
+  JournalEntry,
+  Preferences,
+  SavedPlan,
+  Task,
+  UsageSnapshot,
+  User,
+} from "@/lib/types";
 
 const TOKEN_KEY = "heartspace.token";
 
@@ -18,11 +30,13 @@ export function setAuthToken(token: string | null) {
 export class ApiError extends Error {
   status: number;
   code?: string;
+  details?: Record<string, unknown>;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -46,9 +60,13 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   }
 
   if (response.status === 204) return undefined as T;
-  const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
+  const body = (await response.json().catch(() => null)) as {
+    message?: string;
+    code?: string;
+    details?: Record<string, unknown>;
+  } | null;
   if (!response.ok) {
-    throw new ApiError(body?.message ?? "The request failed.", response.status, body?.code);
+    throw new ApiError(body?.message ?? "The request failed.", response.status, body?.code, body?.details);
   }
   return body as T;
 }
@@ -60,18 +78,24 @@ export const api = {
   login: (body: { email: string; password: string }) =>
     request<{ user: User; token: string }>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   forgotPassword: (body: { identifier: string }) =>
-    request<{ message: string; channel: "email" | "phone" }>("/api/auth/forgot", { method: "POST", body: JSON.stringify(body) }),
+    request<{
+      message: string;
+      channel: "email" | "phone";
+      delivery?: "email" | "sms" | "local";
+      localCode?: string;
+    }>("/api/auth/forgot", { method: "POST", body: JSON.stringify(body) }),
   resetPassword: (body: { identifier: string; code: string; password: string }) =>
     request<{ message: string }>("/api/auth/reset", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
   me: () => request<{ user: User }>("/api/auth/me"),
-  updateMe: (body: { name: string; email: string }) =>
-    request<{ user: User }>("/api/auth/me", { method: "PATCH", body: JSON.stringify(body) }),
+  updateMe: (body: {
+    name: string;
+    email: string;
+    avatar?: { mimeType: string; data: string };
+    clearAvatar?: boolean;
+  }) => request<{ user: User }>("/api/auth/me", { method: "PATCH", body: JSON.stringify(body) }),
   changePassword: (body: { currentPassword: string; nextPassword: string }) =>
     request<{ token: string }>("/api/auth/password", { method: "POST", body: JSON.stringify(body) }),
-  saveLocation: (body: { label: string; latitude?: number; longitude?: number; savePrecise: boolean }) =>
-    request<{ user: User }>("/api/auth/location", { method: "PUT", body: JSON.stringify(body) }),
-  clearLocation: () => request<{ user: User }>("/api/auth/location", { method: "DELETE" }),
   deleteAccount: (body: { password: string; confirm: "DELETE" }) =>
     request<void>("/api/auth/account", { method: "DELETE", body: JSON.stringify(body) }),
   companions: () => request<{ companions: Companion[] }>("/api/companions"),
@@ -83,6 +107,8 @@ export const api = {
   deleteCompanion: (id: string) => request<void>(`/api/companions/${id}`, { method: "DELETE" }),
   conversations: () => request<{ conversations: Conversation[] }>("/api/conversations"),
   conversation: (id: string) => request<{ conversation: Conversation; messages: ChatMessage[] }>(`/api/conversations/${id}`),
+  renameConversation: (id: string, title: string) =>
+    request<{ conversation: Conversation }>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   sendMessage: (body: {
     conversationId?: string;
@@ -90,42 +116,85 @@ export const api = {
     content: string;
     journalId?: string;
     attachment?: { name: string; mimeType: string; data: string };
-    location?: { latitude?: number; longitude?: number; useSaved?: boolean };
     replyLanguage?: string;
+    mode?: string;
   }) =>
-    request<{ conversation: Conversation; userMessage: ChatMessage; assistantMessage: ChatMessage & { distanceNote?: string } }>(
+    request<{ conversation: Conversation; userMessage: ChatMessage; assistantMessage: ChatMessage }>(
       "/api/chat/message",
       { method: "POST", body: JSON.stringify(body) },
     ),
+  studioGenerate: (body: {
+    mode: string;
+    prompt: string;
+    title?: string;
+    subject?: string;
+    level?: string;
+    assignmentType?: "essay" | "assignment" | "report" | "outline" | "short-answer" | "detailed-answer";
+    wordCount?: number;
+    writingStyle?: "simple" | "academic";
+    slideCount?: number;
+    includeSpeakerNotes?: boolean;
+    companionId?: string;
+    replyLanguage?: string;
+    attachment?: { name: string; mimeType: string; data: string };
+  }) =>
+    request<{
+      mode: string;
+      title: string;
+      content: string;
+      presentation?: { title: string; slides: { title: string; bullets: string[]; notes?: string }[] };
+    }>("/api/studio/generate", { method: "POST", body: JSON.stringify(body) }),
+  studioExport: (body: {
+    format: "pptx" | "docx" | "pdf";
+    title: string;
+    content: string;
+    presentation?: { title: string; slides: { title: string; bullets: string[]; notes?: string }[] };
+  }) =>
+    request<{ filename: string; mimeType: string; data: string }>("/api/studio/export", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  generateImage: (body: {
+    conversationId?: string;
+    companionId?: string;
+    prompt: string;
+    style?: string;
+    purpose?: "general" | "study" | "presentation" | "poster";
+  }) =>
+    request<{
+      conversation: Conversation;
+      userMessage: ChatMessage;
+      assistantMessage: ChatMessage;
+      image: { name: string; mimeType: string; model: string };
+    }>("/api/images/generate", { method: "POST", body: JSON.stringify(body) }),
+  editImage: (body: {
+    conversationId?: string;
+    companionId?: string;
+    prompt: string;
+    image: { name: string; mimeType: string; data: string };
+  }) =>
+    request<{
+      conversation: Conversation;
+      userMessage: ChatMessage;
+      assistantMessage: ChatMessage;
+      image: { name: string; mimeType: string; model: string };
+    }>("/api/images/edit", { method: "POST", body: JSON.stringify(body) }),
+  generateDiagram: (body: {
+    conversationId?: string;
+    companionId?: string;
+    prompt: string;
+    kind?: "flowchart" | "network" | "er" | "uml" | "cycle" | "labeled";
+  }) =>
+    request<{
+      conversation: Conversation;
+      userMessage: ChatMessage;
+      assistantMessage: ChatMessage;
+      image: { name: string; mimeType: string; model: string };
+    }>("/api/images/diagram", { method: "POST", body: JSON.stringify(body) }),
   recommend: (note: string, replyLanguage?: string) =>
     request<{ content: string; saved: boolean; notice: string }>("/api/food/recommend", {
       method: "POST",
       body: JSON.stringify({ note, replyLanguage }),
-    }),
-  geocodePlaces: (query: string) =>
-    request<{ results: PlaceMatch[] }>("/api/restaurants/geocode", {
-      method: "POST",
-      body: JSON.stringify({ query }),
-    }),
-  reversePlace: (body: { latitude: number; longitude: number }) =>
-    request<{ label: string | null }>("/api/restaurants/reverse", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  searchRestaurants: (body: {
-    query: string;
-    area?: string;
-    latitude?: number;
-    longitude?: number;
-    useSaved?: boolean;
-    minRating?: number;
-    price?: "inexpensive" | "moderate" | "expensive" | "very_expensive";
-    openNow?: boolean;
-    category?: "food" | "cafe" | "pharmacy" | "grocery" | "shop";
-  }) =>
-    request<{ source: string; disclaimer: string; distanceNote: string | null; results: Restaurant[] }>("/api/restaurants/search", {
-      method: "POST",
-      body: JSON.stringify(body),
     }),
   journal: (q?: string) => request<{ entries: JournalEntry[] }>(`/api/journal${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   createJournal: (body: { content: string; moodTag: string; status: "draft" | "saved" }) =>
@@ -151,14 +220,22 @@ export const api = {
     request<{ content: string }>("/api/guide", { method: "POST", body: JSON.stringify(body) }),
   sendFeedback: (body: { rating: number; category: string; comment: string; email?: string; company?: string }) =>
     request<{ saved: boolean }>("/api/feedback", { method: "POST", body: JSON.stringify(body) }),
+  feedbackSummary: () =>
+    request<{ count: number; average: number | null; stars: Record<"1" | "2" | "3" | "4" | "5", number> }>("/api/feedback/summary"),
   reviewFeedback: (reviewKey: string) =>
     request<{ feedback: { id: string; rating: number; category: string; comment: string; email: string; signedIn: boolean; createdAt: string }[] }>(
       "/api/feedback",
       { headers: { "X-Sahara-Review": reviewKey } },
     ),
+  billingPlans: () => request<BillingPlansResponse>("/api/billing/plans"),
+  billingUsage: () => request<{ usage: UsageSnapshot }>("/api/billing/usage"),
+  billingStatus: () =>
+    request<{
+      planId: string;
+      planName: string;
+      paymentsConfigured: boolean;
+      canCheckout: boolean;
+      checkoutNotice: string;
+      usage: UsageSnapshot;
+    }>("/api/billing/status"),
 };
-
-export function photoUrl(token?: string): string | undefined {
-  if (!token || !apiBase()) return undefined;
-  return `${apiBase()}/api/restaurants/photo?token=${encodeURIComponent(token)}`;
-}

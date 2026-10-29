@@ -9,6 +9,14 @@ const savedLocationSchema = new Schema(
   { _id: false },
 );
 
+const avatarSchema = new Schema(
+  {
+    mimeType: { type: String, required: true, maxlength: 40 },
+    data: { type: String, required: true, maxlength: 1_600_000 },
+  },
+  { _id: false },
+);
+
 const userSchema = new Schema(
   {
     name: { type: String, required: true, trim: true, maxlength: 60 },
@@ -16,6 +24,10 @@ const userSchema = new Schema(
     phone: { type: String, unique: true, sparse: true, trim: true },
     passwordHash: { type: String, required: true },
     tokenVersion: { type: Number, required: true, default: 0 },
+    /** free | premium — Premium requires verified payment or a manual grant. */
+    planTier: { type: String, enum: ["free", "premium"], required: true, default: "free" },
+    planExpiresAt: { type: Date, default: null },
+    avatar: { type: avatarSchema, default: null },
     savedLocation: { type: savedLocationSchema, default: null },
   },
   { timestamps: true },

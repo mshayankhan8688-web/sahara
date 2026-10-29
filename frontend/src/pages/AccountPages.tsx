@@ -192,20 +192,62 @@ export function ProfilePage() {
   const { user, refresh } = useAuth();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
+  const [avatar, setAvatar] = useState<{ mimeType: string; data: string } | null>(user?.avatar ?? null);
+  const [avatarDirty, setAvatarDirty] = useState(false);
+  const [clearAvatar, setClearAvatar] = useState(false);
+  const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   if (!user) return null;
 
+  const previewSrc = avatar ? `data:${avatar.mimeType};base64,${avatar.data}` : null;
+  const initials = name.trim().slice(0, 1).toUpperCase() || "S";
+
+  const pickPhoto = async (list: FileList | null) => {
+    const file = list?.[0];
+    if (!file) return;
+    const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    if (!allowed.includes(file.type)) {
+      setError("JPEG, PNG, WebP, ya GIF photo use karein.");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setError("Photo 1 MB se choti rakhein.");
+      return;
+    }
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    bytes.forEach((value) => {
+      binary += String.fromCharCode(value);
+    });
+    setAvatar({ mimeType: file.type, data: btoa(binary) });
+    setAvatarDirty(true);
+    setClearAvatar(false);
+    setError("");
+    setMessage("");
+  };
+
   const save = async (event: FormEvent) => {
     event.preventDefault();
+    setPending(true);
     try {
-      const result = await api.updateMe({ name, email });
+      const result = await api.updateMe({
+        name,
+        email,
+        ...(clearAvatar ? { clearAvatar: true } : avatarDirty && avatar ? { avatar } : {}),
+      });
       refresh(result.user);
+      setAvatar(result.user.avatar ?? null);
+      setAvatarDirty(false);
+      setClearAvatar(false);
       setMessage("Profile saved.");
       setError("");
     } catch (saveError) {
       console.error("Failed to update profile", saveError);
       setError(saveError instanceof ApiError ? saveError.message : "Profile could not be saved.");
+    } finally {
+      setPending(false);
     }
   };
 
@@ -215,10 +257,44 @@ export function ProfilePage() {
       <form onSubmit={(event) => void save(event)} className="max-w-md space-y-4">
         {error ? <Alert>{error}</Alert> : null}
         {message ? <Alert>{message}</Alert> : null}
+        <div className="flex items-center gap-4">
+          <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-full border border-line bg-muted text-2xl font-semibold text-accent">
+            {previewSrc ? <img src={previewSrc} alt="" className="h-full w-full object-cover" /> : initials}
+          </div>
+          <div className="min-w-0 space-y-2">
+            <p className="text-sm text-soft">Apni profile pic yahan lagayein. Har account ki apni photo save hoti hai.</p>
+            <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-line px-3 py-2 text-xs font-semibold transition hover:bg-muted">
+              Choose photo
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="sr-only"
+                onChange={(event) => {
+                  void pickPhoto(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            {previewSrc || user.avatar ? (
+              <button
+                type="button"
+                className="ml-2 text-xs font-semibold text-accent"
+                onClick={() => {
+                  setAvatar(null);
+                  setClearAvatar(true);
+                  setAvatarDirty(false);
+                  setMessage("");
+                }}
+              >
+                Remove photo
+              </button>
+            ) : null}
+          </div>
+        </div>
         <Field label="Name"><TextInput value={name} onChange={(event) => setName(event.target.value)} /></Field>
         {user.phone ? <p className="text-sm text-soft">Phone {user.phone}. Password codes for this number are texted here.</p> : null}
         <Field label={user.phone ? "Email, optional" : "Email"}><TextInput type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
-        <Button type="submit">Save profile</Button>
+        <Button type="submit" disabled={pending}>{pending ? "Saving…" : "Save profile"}</Button>
       </form>
     </div>
   );
@@ -240,7 +316,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     api.health().then((result) => {
-      setHealth(`Database ${result.database}. Gemini ${result.aiConfigured ? "configured" : "missing"}. Places ${result.placesConfigured ? "configured" : "missing"}.`);
+      setHealth(`Database ${result.database}. Gemini ${result.aiConfigured ? "configured" : "missing"}.`);
     }).catch((healthError) => {
       console.error("Health check failed", healthError);
       setHealth(healthError instanceof Error ? healthError.message : "The API could not be reached.");
@@ -276,7 +352,7 @@ export function SettingsPage() {
       <section className="mt-10 max-w-xl text-sm leading-6 text-soft">
         <h2 className="font-serif text-3xl text-ink">Services</h2>
         <p className="mt-3">{health}</p>
-        <p className="mt-3">Chat text is processed by Google Gemini. Restaurant searches use Google Places when that key is set, and OpenStreetMap otherwise. The browser keeps a session token so this site can call the API when it is hosted on another domain.</p>
+        <p className="mt-3">Chat text is processed by Google Gemini. The browser keeps a session token so this site can call the API when it is hosted on another domain.</p>
       </section>
       <section className="mt-10 max-w-xl">
         <h2 className="font-serif text-3xl">Password</h2>

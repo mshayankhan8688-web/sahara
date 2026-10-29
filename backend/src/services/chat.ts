@@ -7,25 +7,13 @@ import { Message } from "../models/Message.js";
 import { Preference } from "../models/Preference.js";
 import { User } from "../models/User.js";
 import { asObjectId } from "../lib/objectId.js";
-import { signPhoto } from "../lib/tokens.js";
-import { classifyIntent, composeReply, type Intent } from "./gemini.js";
-import { searchRestaurants } from "./places.js";
-import type { Restaurant } from "./placeMapper.js";
+import type { ChatMode } from "../lib/modes.js";
+import { inferChatMode } from "../lib/modes.js";
+import { extractOfficeText } from "../lib/officeText.js";
+import { composeReply } from "./gemini.js";
 import type { ReplyLanguage } from "../lib/replyLanguage.js";
+import { titleFrom } from "../lib/titleFrom.js";
 import type { PreferenceView, SearchStatus } from "./prompt.js";
-
-type LocationInput = { latitude?: number; longitude?: number; useSaved?: boolean };
-
-function titleFrom(content: string): string {
-  const clean = content.replace(/\s+/g, " ").trim();
-  if (clean.length <= 48) return clean || "New chat";
-  return `${clean.slice(0, 48).trimEnd()}…`;
-}
-
-function mentioned(corpus: string, area: string): boolean {
-  const needle = area.trim().toLowerCase();
-  return needle.length >= 2 && corpus.toLowerCase().includes(needle);
-}
 
 export async function loadPreferences(userId: string): Promise<PreferenceView | null> {
   const doc = await Preference.findOne({ userId }).lean();
@@ -52,8 +40,8 @@ export async function createChatReply(input: {
   content: string;
   journalId?: string;
   attachment?: { name: string; mimeType: string; data: string };
-  location?: LocationInput;
   replyLanguage?: ReplyLanguage;
+  mode?: ChatMode;
 }) {
   const user = await User.findById(input.userId);
   if (!user) throw new HttpError(401, "Sign in again.", "UNAUTHENTICATED");
@@ -81,10 +69,20 @@ export async function createChatReply(input: {
     companion.style = professionalStyle(companion.style);
   }
 
-  const attachment: ChatAttachment | undefined = input.attachment ? parseAttachment(input.attachment) : undefined;
+  let attachment: ChatAttachment | undefined;
+  let officeExtra = "";
+  if (input.attachment) {
+    const office = await extractOfficeText(input.attachment);
+    if (office) {
+      officeExtra = `\n\n---\nExtracted text from ${office.name}:\n${office.text}`;
+    } else {
+      attachment = parseAttachment(input.attachment);
+    }
+  }
   const spoken = input.content.trim();
-  let latest = spoken || (attachment ? "I attached a file. Please read it." : "");
+  let latest = spoken || (attachment || officeExtra ? "I attached a file. Please read it." : "");
   if (!latest) throw new HttpError(400, "Write a message or attach a file.", "EMPTY_MESSAGE");
+  latest += officeExtra;
   if (input.journalId) {
     const entry = await JournalEntry.findOne({ _id: asObjectId(input.journalId), userId: input.userId });
     if (!entry || !entry.content.trim()) throw new HttpError(404, "That journal entry was not found.", "NOT_FOUND");
@@ -99,93 +97,22 @@ export async function createChatReply(input: {
     content: message.content,
   }));
 
-  const transcript = [...history, { sender: "user" as const, content: latest }]
-    .slice(-6)
-    .map((message) => `${message.sender}: ${message.content}`)
-    .join("\n");
-
-  let intent: Intent = { intent: "chat", foodQuery: "", areaText: "", wantsNearby: false, openNow: false };
-  const mayWantAPlace =
-    /restaurant|nearby|near me|\baround\b|qareeb|\bpaas\b|cafe|coffee|burger|pizza|biryani|khana|khaana|khane|\bbhook\b|hungry|dinner|lunch|breakfast|nashta|\bmenu\b|delivery|halal|\bfood\b|\beat\b/i.test(
-      latest,
-    );
-  try {
-    if (mayWantAPlace) intent = await classifyIntent(transcript);
-  } catch (error) {
-    if (error instanceof HttpError && error.code === "AI_NOT_CONFIGURED") throw error;
-    console.error("Intent classification failed", error);
-    intent = { intent: "chat", foodQuery: "", areaText: "", wantsNearby: false, openNow: false };
-  }
-
-  const corpus = transcript;
-  const area = intent.areaText && mentioned(corpus, intent.areaText) ? intent.areaText.trim() : undefined;
-  const wantsPlace = intent.intent === "restaurant" || (intent.intent === "food" && intent.wantsNearby);
-  const saved = user.savedLocation;
-  const shared =
-    input.location && typeof input.location.latitude === "number" && typeof input.location.longitude === "number"
-      ? { latitude: input.location.latitude, longitude: input.location.longitude }
-      : undefined;
-  const savedCoords =
-    input.location?.useSaved && typeof saved?.latitude === "number" && typeof saved.longitude === "number"
-      ? { latitude: saved.latitude, longitude: saved.longitude }
-      : undefined;
-  const origin = shared ?? savedCoords;
-  const savedArea = input.location?.useSaved && saved?.label ? saved.label : undefined;
-
-  let status: SearchStatus = "not_requested";
-  let note: string | undefined;
-  let results: Restaurant[] = [];
-  let distanceNote: string | undefined;
-
-  if (wantsPlace) {
-    const searchArea = area ?? (!origin ? savedArea : undefined);
-    if (!origin && !searchArea) {
-      status = "needs_location";
-      note = "No city or coordinates were available for this turn.";
-    } else {
-      try {
-        const found = await searchRestaurants({
-          query: intent.foodQuery || "restaurants",
-          latitude: origin?.latitude,
-          longitude: origin?.longitude,
-          area: searchArea,
-          minRating: intent.minRating,
-          price: intent.price,
-          openNow: intent.openNow,
-        });
-        results = found.results;
-        distanceNote = found.distanceNote;
-        status = results.length > 0 ? "completed" : "empty";
-      } catch (error) {
-        console.error("Chat restaurant search failed", error);
-        status = error instanceof HttpError && error.code === "PLACES_NOT_CONFIGURED" ? "not_configured" : "failed";
-        note = error instanceof HttpError ? error.message : "Restaurant search failed.";
-      }
-    }
-  }
+  const status: SearchStatus = "not_requested";
+  const mode: ChatMode = input.mode ?? inferChatMode(spoken || latest);
 
   const preferences = await loadPreferences(input.userId);
-  let kind: "ai" | "notice" = "ai";
-  let content: string;
-  try {
-    content = await composeReply({
-      companionName: companion.name,
-      companionStyle: companion.style,
-      preferences,
-      history,
-      latest,
-      attachment,
-      search: { status, note, results },
-      replyLanguage: input.replyLanguage,
-    });
-  } catch (error) {
-    if (status === "completed" || status === "empty") {
-      kind = "notice";
-      content = "The AI explanation didn't come back. The places below are from the restaurant search and were not written by the model.";
-    } else {
-      throw error;
-    }
-  }
+  const kind = "ai" as const;
+  const content = await composeReply({
+    companionName: companion.name,
+    companionStyle: companion.style,
+    preferences,
+    history,
+    latest,
+    attachment,
+    search: { status, results: [] },
+    replyLanguage: input.replyLanguage,
+    mode,
+  });
 
   if (!conversation) {
     conversation = await Conversation.create({
@@ -199,12 +126,16 @@ export async function createChatReply(input: {
   conversation.updatedAt = new Date();
   await conversation.save();
 
+  const storedUserContent = (
+    spoken ||
+    (attachment || officeExtra ? `Attached ${attachment?.name ?? input.attachment?.name ?? "file"}` : "")
+  ).slice(0, 4000);
   const userMessage = await Message.create({
     conversationId: conversation._id,
     userId: input.userId,
     sender: "user",
     kind: "ai",
-    content: spoken ? latest : `Attached ${attachment?.name ?? "file"}`,
+    content: storedUserContent,
     attachment,
     places: [],
   });
@@ -214,7 +145,7 @@ export async function createChatReply(input: {
     sender: "assistant",
     kind,
     content,
-    places: results,
+    places: [],
   });
 
   return {
@@ -225,11 +156,7 @@ export async function createChatReply(input: {
       updatedAt: conversation.updatedAt,
     },
     userMessage: serializeMessage(userMessage),
-    assistantMessage: {
-      ...serializeMessage(assistantMessage),
-      places: results.map((place) => ({ ...place, photoToken: place.photoName ? signPhoto(place.photoName) : undefined })),
-      distanceNote,
-    },
+    assistantMessage: serializeMessage(assistantMessage),
   };
 }
 

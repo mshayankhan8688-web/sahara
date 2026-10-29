@@ -72,4 +72,13 @@ test("saves feedback and shows it only with the review key", async () => {
   assert.equal(review.body.feedback[0].category, "AI Chat");
   assert.equal(review.body.feedback[0].rating, 5);
   assert.equal(review.body.feedback[0].comment.includes("continue the thread"), true);
+
+  const summary = await request(app).get("/api/feedback/summary");
+  assert.equal(summary.status, 200);
+  assert.equal(summary.body.count, 1);
+  assert.equal(summary.body.average, 5);
+  assert.equal(summary.body.stars[5], 1);
+  assert.equal(summary.body.stars[1], 0);
+  assert.equal(summary.body.comment, undefined);
+  assert.equal(summary.body.feedback, undefined);
 });

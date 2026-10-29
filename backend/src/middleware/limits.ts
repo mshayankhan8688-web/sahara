@@ -15,6 +15,8 @@ function limiter(limit: number) {
 
 export const authLimiter = limiter(10);
 export const chatLimiter = limiter(30);
+export const imageLimiter = limiter(12);
 export const searchLimiter = limiter(30);
 export const feedbackLimiter = limiter(8);
 export const feedbackReviewLimiter = limiter(20);
+export const feedbackSummaryLimiter = limiter(60);

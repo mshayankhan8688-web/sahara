@@ -51,3 +51,32 @@ export function parseAttachment(input: { name: string; mimeType: string; data: s
   }
   return { name, mimeType: typed, data };
 }
+
+const AVATAR_MAX_BYTES = 1024 * 1024;
+const avatarTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+export type ProfileAvatar = {
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  data: string;
+};
+
+/** Profile photos only — images up to 1 MB. */
+export function parseAvatar(input: { mimeType: string; data: string }): ProfileAvatar {
+  const mimeType = input.mimeType.trim().toLowerCase().split(";")[0] ?? "";
+  if (!avatarTypes.has(mimeType)) {
+    throw new HttpError(400, "Use a JPEG, PNG, WebP, or GIF photo.", "FILE_TYPE");
+  }
+  const data = input.data.replace(/\s/g, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    throw new HttpError(400, "That photo could not be read.", "FILE_DATA");
+  }
+  const bytes = Buffer.from(data, "base64");
+  if (bytes.length === 0 || bytes.length > AVATAR_MAX_BYTES) {
+    throw new HttpError(400, "Keep your photo under 1 MB.", "FILE_SIZE");
+  }
+  const typed = mimeType as ProfileAvatar["mimeType"];
+  if (!matchesType(typed, bytes)) {
+    throw new HttpError(400, "That file does not match its type.", "FILE_TYPE");
+  }
+  return { mimeType: typed, data };
+}

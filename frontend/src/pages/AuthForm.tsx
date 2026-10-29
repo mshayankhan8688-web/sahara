@@ -108,7 +108,12 @@ export function ForgotPasswordPage() {
     try {
       const result = await api.forgotPassword({ identifier });
       setSent(result.channel);
-      setNotice(result.message);
+      if (result.localCode) {
+        setCode(result.localCode);
+        setNotice(`${result.message} Local code: ${result.localCode}`);
+      } else {
+        setNotice(result.message);
+      }
     } catch (error) {
       console.error("Password reset request failed", error);
       setFormError(error instanceof ApiError ? error.message : "The code could not be sent.");

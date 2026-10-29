@@ -6,7 +6,7 @@ import { reviewAuthorized } from "../lib/reviewSecret.js";
 import { readSession } from "../lib/tokens.js";
 import { Feedback } from "../models/Feedback.js";
 import { User } from "../models/User.js";
-import { feedbackLimiter, feedbackReviewLimiter } from "../middleware/limits.js";
+import { feedbackLimiter, feedbackReviewLimiter, feedbackSummaryLimiter } from "../middleware/limits.js";
 import { validateBody } from "../middleware/validate.js";
 
 export const feedbackRouter = Router();
@@ -39,6 +39,31 @@ feedbackRouter.post(
     });
     if (!saved.id) throw new HttpError(500, "Feedback was not saved.", "NOT_SAVED");
     res.status(201).json({ saved: true });
+  }),
+);
+
+feedbackRouter.get(
+  "/summary",
+  feedbackSummaryLimiter,
+  asyncHandler(async (_req, res) => {
+    const grouped = await Feedback.aggregate<{ _id: number; count: number }>([
+      { $group: { _id: "$rating", count: { $sum: 1 } } },
+    ]);
+    const stars = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let count = 0;
+    let weighted = 0;
+    for (const row of grouped) {
+      const rating = row._id;
+      if (rating < 1 || rating > 5 || !Number.isInteger(rating)) continue;
+      stars[rating as 1 | 2 | 3 | 4 | 5] = row.count;
+      count += row.count;
+      weighted += rating * row.count;
+    }
+    res.json({
+      count,
+      average: count === 0 ? null : Math.round((weighted / count) * 10) / 10,
+      stars,
+    });
   }),
 );
 

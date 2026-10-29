@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chatModes } from "./modes.js";
 import { replyLanguages } from "./replyLanguage.js";
 
 const list = z.array(z.string().trim().min(1).max(40)).max(20);
@@ -33,6 +34,13 @@ export const loginSchema = z.object({
 export const profileSchema = z.object({
   name: z.string().trim().min(2).max(60),
   email: z.union([z.string().trim().email("Enter a valid email.").max(120), z.literal("")]),
+  avatar: z
+    .object({
+      mimeType: z.string().trim().min(1).max(40),
+      data: z.string().trim().min(1).max(1_600_000),
+    })
+    .optional(),
+  clearAvatar: z.boolean().optional(),
 });
 
 export const passwordSchema = z.object({
@@ -86,11 +94,89 @@ export const chatSchema = z
       })
       .optional(),
     replyLanguage: z.enum(replyLanguages).default("auto"),
+    mode: z.enum(chatModes).optional(),
   })
   .refine((value) => value.content.length > 0 || Boolean(value.attachment), {
     message: "Write a message or attach a file.",
     path: ["content"],
   });
+
+export const conversationTitleSchema = z.object({
+  title: z.string().trim().min(1, "Enter a title.").max(80, "Keep the title under 80 characters."),
+});
+
+export const studioGenerateSchema = z.object({
+  mode: z.enum(chatModes).default("study"),
+  prompt: z.string().trim().min(2, "Describe what you need.").max(4000),
+  title: z.string().trim().max(120).optional(),
+  subject: z.string().trim().max(120).optional(),
+  level: z.string().trim().max(80).optional(),
+  assignmentType: z
+    .enum(["essay", "assignment", "report", "outline", "short-answer", "detailed-answer"])
+    .optional(),
+  wordCount: z.number().int().min(50).max(5000).optional(),
+  writingStyle: z.enum(["simple", "academic"]).optional(),
+  slideCount: z.number().int().min(4).max(20).optional(),
+  includeSpeakerNotes: z.boolean().optional(),
+  companionId: z.string().trim().optional(),
+  replyLanguage: z.enum(replyLanguages).default("auto"),
+  attachment: z
+    .object({
+      name: z.string().trim().min(1).max(120),
+      mimeType: z.string().trim().min(1).max(80),
+      data: z.string().trim().min(1).max(4_200_000),
+    })
+    .optional(),
+});
+
+export const studioExportSchema = z.object({
+  format: z.enum(["pptx", "docx", "pdf"]),
+  title: z.string().trim().min(1).max(120),
+  content: z.string().trim().max(80_000).default(""),
+  presentation: z
+    .object({
+      title: z.string().trim().min(1).max(120),
+      slides: z
+        .array(
+          z.object({
+            title: z.string().trim().min(1).max(80),
+            bullets: z.array(z.string().trim().min(1).max(400)).max(10),
+            notes: z.string().trim().max(1000).optional(),
+          }),
+        )
+        .min(1)
+        .max(40),
+    })
+    .optional(),
+});
+
+const imageAttachmentSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  mimeType: z.string().trim().min(1).max(80),
+  data: z.string().trim().min(1).max(4_200_000),
+});
+
+export const imageGenerateSchema = z.object({
+  conversationId: z.string().trim().optional(),
+  companionId: z.string().trim().optional(),
+  prompt: z.string().trim().min(2, "Describe the image.").max(2000),
+  style: z.string().trim().max(200).optional(),
+  purpose: z.enum(["general", "study", "presentation", "poster"]).default("general"),
+});
+
+export const imageEditSchema = z.object({
+  conversationId: z.string().trim().optional(),
+  companionId: z.string().trim().optional(),
+  prompt: z.string().trim().min(2, "Describe the edit.").max(2000),
+  image: imageAttachmentSchema,
+});
+
+export const imageDiagramSchema = z.object({
+  conversationId: z.string().trim().optional(),
+  companionId: z.string().trim().optional(),
+  prompt: z.string().trim().min(2, "Describe the diagram.").max(2000),
+  kind: z.enum(["flowchart", "network", "er", "uml", "cycle", "labeled"]).optional(),
+});
 
 export const foodSchema = z.object({
   note: z.string().trim().min(1).max(500),

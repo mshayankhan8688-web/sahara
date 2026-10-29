@@ -3,9 +3,24 @@ import { config, mailConfigured, smsConfigured } from "../config.js";
 import type { ResetChannel } from "../lib/contact.js";
 import { HttpError } from "../http.js";
 
-export async function sendResetCode(channel: ResetChannel, destination: string, code: string): Promise<void> {
+export type ResetDelivery = "email" | "sms" | "local";
+
+/** Local/dev only: show the code in the UI when SMTP/Twilio are not configured. Never used in production. */
+export function allowLocalResetCode(): boolean {
+  return config.nodeEnv === "development";
+}
+
+export async function sendResetCode(
+  channel: ResetChannel,
+  destination: string,
+  code: string,
+): Promise<ResetDelivery> {
   if (channel === "email") {
     if (!mailConfigured) {
+      if (allowLocalResetCode()) {
+        console.info(`[SAHARA local reset] email=${destination} code=${code}`);
+        return "local";
+      }
       throw new HttpError(
         503,
         "Password codes cannot be emailed yet. Add SMTP_HOST, SMTP_USER, SMTP_PASS, and SMTP_FROM on the server.",
@@ -29,10 +44,14 @@ export async function sendResetCode(channel: ResetChannel, destination: string, 
       console.error("Password code email failed", error);
       throw new HttpError(502, "The email could not be sent. Try again.", "EMAIL_FAILED");
     }
-    return;
+    return "email";
   }
 
   if (!smsConfigured) {
+    if (allowLocalResetCode()) {
+      console.info(`[SAHARA local reset] phone=${destination} code=${code}`);
+      return "local";
+    }
     throw new HttpError(
       503,
       "Password codes cannot be texted yet. Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM on the server.",
@@ -57,4 +76,5 @@ export async function sendResetCode(channel: ResetChannel, destination: string, 
     console.error("Password code text failed", response.status);
     throw new HttpError(502, "The text message could not be sent. Try again.", "SMS_FAILED");
   }
+  return "sms";
 }

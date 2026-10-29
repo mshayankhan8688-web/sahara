@@ -1,6 +1,8 @@
-import { GoogleGenAI, Type, type Content } from "@google/genai";
+import { GoogleGenAI, Type, type Content, type Schema } from "@google/genai";
 import { aiConfigured, config } from "../config.js";
 import { HttpError } from "../http.js";
+import type { ChatMode } from "../lib/modes.js";
+import { tokensForMode } from "../lib/modes.js";
 import type { ReplyLanguage } from "../lib/replyLanguage.js";
 import { CLASSIFIER_PROMPT, systemPrompt, type PreferenceView, type SearchStatus } from "./prompt.js";
 import type { Restaurant } from "./placeMapper.js";
@@ -39,7 +41,8 @@ function client(): GoogleGenAI {
       "AI_NOT_CONFIGURED",
     );
   }
-  gemini ??= new GoogleGenAI({ apiKey: config.geminiApiKey, httpOptions: { timeout: 12_000 } });
+  // Keep HTTP timeout high; per-request AbortSignal still caps each call.
+  gemini ??= new GoogleGenAI({ apiKey: config.geminiApiKey, httpOptions: { timeout: 120_000 } });
   return gemini;
 }
 
@@ -89,7 +92,12 @@ function supportsThinkingConfig(model: string): boolean {
   return !model.includes("flash-lite-latest");
 }
 
-async function generate(contents: Content[] | string, configOverride: Record<string, unknown>): Promise<string> {
+async function generate(
+  contents: Content[] | string,
+  configOverride: Record<string, unknown>,
+  options?: { timeoutMs?: number },
+): Promise<string> {
+  const timeoutMs = options?.timeoutMs ?? 12_000;
   let lastError: unknown;
   for (const model of modelsToTry()) {
     try {
@@ -98,7 +106,7 @@ async function generate(contents: Content[] | string, configOverride: Record<str
         contents,
         config: {
           maxOutputTokens: 280,
-          abortSignal: AbortSignal.timeout(12_000),
+          abortSignal: AbortSignal.timeout(timeoutMs),
           ...configOverride,
           ...(supportsThinkingConfig(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
         },
@@ -117,6 +125,42 @@ async function generate(contents: Content[] | string, configOverride: Record<str
   }
   console.error("Gemini request failed", lastError);
   throw new HttpError(502, safeMessage(lastError), isBusy(lastError) ? "AI_BUSY" : "AI_FAILED");
+}
+
+export async function generateStructured<T>(input: {
+  latest: string;
+  attachment?: { mimeType: string; data: string };
+  systemInstruction: string;
+  schema: Schema;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+}): Promise<T> {
+  const contents: Content[] = [
+    {
+      role: "user",
+      parts: [
+        { text: input.latest },
+        ...(input.attachment ? [{ inlineData: { mimeType: input.attachment.mimeType, data: input.attachment.data } }] : []),
+      ],
+    },
+  ];
+  const text = await generate(
+    contents,
+    {
+      temperature: 0.4,
+      maxOutputTokens: input.maxOutputTokens ?? 3072,
+      systemInstruction: input.systemInstruction,
+      responseMimeType: "application/json",
+      responseSchema: input.schema,
+    },
+    { timeoutMs: input.timeoutMs ?? 55_000 },
+  );
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    console.error("Gemini structured JSON parse failed", error);
+    throw new HttpError(502, "The AI returned an invalid outline. Try again.", "AI_BAD_JSON");
+  }
 }
 
 export async function classifyIntent(transcript: string): Promise<Intent> {
@@ -155,7 +199,11 @@ export async function composeReply(input: {
   attachment?: { mimeType: string; data: string };
   search: { status: SearchStatus; note?: string; results: Restaurant[] };
   replyLanguage?: ReplyLanguage;
+  mode?: ChatMode;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
 }): Promise<string> {
+  const mode = input.mode ?? "general";
   const contents: Content[] = [
     ...input.history.map((message) => ({
       role: message.sender === "user" ? ("user" as const) : ("model" as const),
@@ -169,9 +217,22 @@ export async function composeReply(input: {
       ],
     },
   ];
-  return generate(contents, {
-    temperature: 0.7,
-    maxOutputTokens: input.attachment ? 700 : 280,
-    systemInstruction: systemPrompt({ ...input, fileAttached: Boolean(input.attachment) }),
-  });
+  const temperature = mode === "emotion" ? 0.75 : mode === "assignment" || mode === "ppt" || mode === "document" ? 0.45 : 0.65;
+  return generate(
+    contents,
+    {
+      temperature,
+      maxOutputTokens: input.maxOutputTokens ?? tokensForMode(mode, Boolean(input.attachment)),
+      systemInstruction: systemPrompt({ ...input, mode, fileAttached: Boolean(input.attachment) }),
+    },
+    {
+      timeoutMs:
+        input.timeoutMs ??
+        (input.attachment
+          ? 90_000
+          : mode === "emotion" || mode === "general"
+            ? 25_000
+            : 60_000),
+    },
+  );
 }

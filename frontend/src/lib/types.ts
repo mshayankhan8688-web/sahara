@@ -4,7 +4,48 @@ export type User = {
   email: string;
   phone?: string | null;
   createdAt: string;
-  savedLocation: { label: string; hasCoordinates: boolean } | null;
+  planId?: "free" | "premium";
+  planExpiresAt?: string | null;
+  avatar?: { mimeType: string; data: string } | null;
+};
+
+export type UsageBucket = {
+  kind: "chat" | "studio" | "image" | "diagram";
+  used: number;
+  limit: number;
+  remaining: number;
+};
+
+export type UsageSnapshot = {
+  planId: "free" | "premium";
+  planName: string;
+  day: string;
+  resetsAt: string;
+  paymentsConfigured: boolean;
+  buckets: UsageBucket[];
+};
+
+export type BillingPlan = {
+  id: "free" | "premium";
+  name: string;
+  description: string;
+  monthlyPricePkr: number | null;
+  annualPricePkr: number | null;
+  limits: {
+    chatDaily: number;
+    studioDaily: number;
+    imageDaily: number;
+    diagramDaily: number;
+  };
+  features: string[];
+  premiumOnly: boolean;
+};
+
+export type BillingPlansResponse = {
+  currency: string;
+  paymentsConfigured: boolean;
+  paymentNotice: string;
+  plans: BillingPlan[];
 };
 
 export type Companion = {
@@ -19,37 +60,9 @@ export type Conversation = {
   id: string;
   title: string;
   companionId: string | null;
+  preview?: string;
   createdAt: string;
   updatedAt: string;
-};
-
-export type PlaceMatch = {
-  label: string;
-  latitude: number;
-  longitude: number;
-  kind?: string;
-};
-
-export type Restaurant = {
-  id: string;
-  name: string;
-  address?: string;
-  distanceKm?: number;
-  rating?: number;
-  ratingCount?: number;
-  priceLabel?: string;
-  openNow?: boolean;
-  weekdayHours?: string[];
-  website?: string;
-  mapsUrl?: string;
-  photoToken?: string;
-  photoCredit?: string;
-  primaryType?: string;
-  servesVegetarianFood?: boolean;
-  summary?: string;
-  phone?: string;
-  latitude?: number;
-  longitude?: number;
 };
 
 export type Task = {
@@ -76,7 +89,6 @@ export type ChatMessage = {
   kind: "ai" | "notice";
   content: string;
   attachment?: { name: string; mimeType: string; data: string };
-  places: Restaurant[];
   createdAt: string;
 };
 
@@ -108,5 +120,6 @@ export type Health = {
   ok: boolean;
   database: string;
   aiConfigured: boolean;
-  placesConfigured: boolean;
+  placesConfigured?: boolean;
+  paymentsConfigured?: boolean;
 };

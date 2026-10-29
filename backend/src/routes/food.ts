@@ -7,6 +7,7 @@ import { requireUser } from "../middleware/auth.js";
 import { chatLimiter } from "../middleware/limits.js";
 import { validateBody } from "../middleware/validate.js";
 import { composeReply } from "../services/gemini.js";
+import { consumeUsage } from "../services/usage.js";
 
 export const foodRouter = Router();
 
@@ -18,6 +19,7 @@ foodRouter.post(
   asyncHandler(async (req, res) => {
     const companion = await Companion.findOne({ userId: req.user!.id, isDefault: true });
     if (!companion) throw new HttpError(400, "Choose a companion first.", "NO_COMPANION");
+    const usage = await consumeUsage(req.user!.id, "chat");
     const doc = await Preference.findOne({ userId: req.user!.id }).lean();
     const preferences =
       doc && doc.personalizationEnabled
@@ -47,7 +49,8 @@ foodRouter.post(
     res.json({
       content,
       saved: false,
-      notice: "This is a general Gemini suggestion. It is not medical advice, and it is not a restaurant listing.",
+      notice: "This is a general Gemini suggestion. It is not medical advice.",
+      usage,
     });
   }),
 );
