@@ -1,6 +1,6 @@
+import { createRequire } from "node:module";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun, AlignmentType, PageNumber, Footer, Header } from "docx";
 import PDFDocument from "pdfkit";
-import pptxgenModule from "pptxgenjs";
 import { HttpError } from "../http.js";
 import { normalizeStudioMarkdown, stripMarkdownMarkers } from "../lib/markdownNormalize.js";
 
@@ -34,7 +34,12 @@ type PptxInstance = {
   write: (opts: { outputType: "nodebuffer" }) => Promise<Buffer | Uint8Array | ArrayBuffer | string>;
 };
 
-const PptxGenJS = pptxgenModule as unknown as new () => PptxInstance;
+/** Vercel/@vercel/node resolves the ESM export then loads it as CJS and crashes boot. Force the CJS main. */
+function loadPptxGenJS(): new () => PptxInstance {
+  const require = createRequire(import.meta.url);
+  const mod = require("pptxgenjs") as (new () => PptxInstance) | { default: new () => PptxInstance };
+  return typeof mod === "function" ? mod : mod.default;
+}
 
 export type SlideSpec = {
   title: string;
@@ -122,6 +127,7 @@ export function parsePresentationJson(raw: string, fallbackTitle = "SAHARA Prese
 }
 
 export async function buildPptx(spec: PresentationSpec): Promise<Buffer> {
+  const PptxGenJS = loadPptxGenJS();
   const pptx = new PptxGenJS();
   pptx.author = "SAHARA";
   pptx.title = spec.title;
