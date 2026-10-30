@@ -3,7 +3,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import mongoose from "mongoose";
-import { aiConfigured, config, placesConfigured, paymentsConfigured as paymentsLive } from "./config.js";
+import { aiConfigured, config, mailConfigured, placesConfigured, paymentsConfigured as paymentsLive, smsConfigured } from "./config.js";
 import { isAllowedOrigin } from "./lib/origin.js";
 import { errorHandler } from "./http.js";
 import { authRouter } from "./routes/auth.js";
@@ -18,6 +18,9 @@ import { photoRouter, restaurantRouter } from "./routes/restaurants.js";
 import { studioRouter } from "./routes/studio.js";
 import { imageRouter } from "./routes/images.js";
 import { billingRouter } from "./routes/billing.js";
+import { favoriteRouter } from "./routes/favorites.js";
+import { studyGoalRouter } from "./routes/studyGoal.js";
+import { allowLocalResetCode } from "./services/resetDelivery.js";
 
 export function createApp() {
   const app = express();
@@ -42,13 +45,21 @@ export function createApp() {
   });
 
   app.get("/api/health", (_req, res) => {
-    res.json({
+    const payload: Record<string, unknown> = {
       ok: mongoose.connection.readyState === 1,
       database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
       aiConfigured,
+      /** True when GOOGLE_PLACES_API_KEY is set. Without it, /api/restaurants falls back to OSM in non-test envs. */
       placesConfigured,
       paymentsConfigured: paymentsLive,
-    });
+      mailConfigured,
+      smsConfigured,
+    };
+    // Dev-only hint — do not advertise local reset fallback in production.
+    if (config.nodeEnv !== "production") {
+      payload.passwordResetLocalFallback = allowLocalResetCode();
+    }
+    res.json(payload);
   });
 
   app.use("/api/auth", authRouter);
@@ -56,6 +67,8 @@ export function createApp() {
   app.use("/api/companions", companionRouter);
   app.use("/api/conversations", conversationRouter);
   app.use("/api/chat", messageRouter);
+  app.use("/api/favorites", favoriteRouter);
+  app.use("/api/study-goal", studyGoalRouter);
   app.use("/api/journal", journalRouter);
   app.use("/api/preferences", preferenceRouter);
   app.use("/api/food", foodRouter);

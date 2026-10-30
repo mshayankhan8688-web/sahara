@@ -13,8 +13,10 @@ function limiter(limit: number) {
   });
 }
 
-export const authLimiter = limiter(10);
+/** Higher ceiling in non-production so local Playwright suites can register users. */
+export const authLimiter = limiter(config.nodeEnv === "production" ? 10 : 200);
 export const chatLimiter = limiter(30);
+export const exportLimiter = limiter(20);
 export const imageLimiter = limiter(12);
 export const searchLimiter = limiter(30);
 export const feedbackLimiter = limiter(8);

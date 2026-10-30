@@ -9,7 +9,7 @@ import { Message } from "../models/Message.js";
 import { requireUser } from "../middleware/auth.js";
 import { chatLimiter } from "../middleware/limits.js";
 import { validateBody } from "../middleware/validate.js";
-import { consumeUsage } from "../services/usage.js";
+import { withUsage } from "../services/usage.js";
 
 export const conversationRouter = Router();
 conversationRouter.use(requireUser);
@@ -17,11 +17,12 @@ conversationRouter.use(requireUser);
 conversationRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    const conversations = await Conversation.find({ userId: req.user!.id }).sort({ updatedAt: -1 }).limit(100).lean();
+    const userId = asObjectId(req.user!.id);
+    const conversations = await Conversation.find({ userId }).sort({ updatedAt: -1 }).limit(100).lean();
     const ids = conversations.map((conversation) => conversation._id);
     const previews = ids.length
       ? await Message.aggregate<{ _id: { toString(): string }; content: string }>([
-          { $match: { conversationId: { $in: ids }, userId: asObjectId(req.user!.id) } },
+          { $match: { conversationId: { $in: ids }, userId } },
           { $sort: { createdAt: -1 } },
           { $group: { _id: "$conversationId", content: { $first: "$content" } } },
         ])
@@ -47,8 +48,9 @@ conversationRouter.patch(
   "/:id",
   validateBody(conversationTitleSchema),
   asyncHandler(async (req, res) => {
+    const userId = asObjectId(req.user!.id);
     const conversation = await Conversation.findOneAndUpdate(
-      { _id: asObjectId(routeParam(req.params.id)), userId: req.user!.id },
+      { _id: asObjectId(routeParam(req.params.id)), userId },
       { $set: { title: req.body.title } },
       { new: true },
     ).lean();
@@ -68,9 +70,10 @@ conversationRouter.patch(
 conversationRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
-    const conversation = await Conversation.findOne({ _id: asObjectId(routeParam(req.params.id)), userId: req.user!.id }).lean();
+    const userId = asObjectId(req.user!.id);
+    const conversation = await Conversation.findOne({ _id: asObjectId(routeParam(req.params.id)), userId }).lean();
     if (!conversation) throw new HttpError(404, "That conversation was not found.", "NOT_FOUND");
-    const messages = await Message.find({ conversationId: conversation._id, userId: req.user!.id }).sort({ createdAt: 1 }).lean();
+    const messages = await Message.find({ conversationId: conversation._id, userId }).sort({ createdAt: 1 }).lean();
     res.json({
       conversation: {
         id: conversation._id.toString(),
@@ -104,9 +107,15 @@ conversationRouter.get(
 conversationRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    const conversation = await Conversation.findOneAndDelete({ _id: asObjectId(routeParam(req.params.id)), userId: req.user!.id });
+    const conversationId = asObjectId(routeParam(req.params.id));
+    const userId = asObjectId(req.user!.id);
+    // Ownership scoped: never delete another user's conversation.
+    const conversation = await Conversation.findOne({ _id: conversationId, userId });
     if (!conversation) throw new HttpError(404, "That conversation was not found.", "NOT_FOUND");
-    await Message.deleteMany({ conversationId: conversation._id, userId: req.user!.id });
+    // Messages first, then the thread, so a failed conversation delete does not leave an empty listed chat.
+    await Message.deleteMany({ conversationId: conversation._id, userId });
+    const removed = await Conversation.findOneAndDelete({ _id: conversation._id, userId });
+    if (!removed) throw new HttpError(404, "That conversation was not found.", "NOT_FOUND");
     res.status(204).end();
   }),
 );
@@ -119,8 +128,9 @@ messageRouter.post(
   chatLimiter,
   validateBody(chatSchema),
   asyncHandler(async (req, res) => {
-    const usage = await consumeUsage(req.user!.id, "chat");
-    const result = await createChatReply({ userId: req.user!.id, ...req.body });
+    const { result, usage } = await withUsage(req.user!.id, "chat", () =>
+      createChatReply({ userId: req.user!.id, ...req.body }),
+    );
     res.json({ ...result, usage });
   }),
 );

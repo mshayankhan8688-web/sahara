@@ -1,9 +1,10 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { useAuth } from "@/context/AuthContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { api, ApiError } from "@/lib/api";
+import type { PasswordResetStatus } from "@/lib/types";
 import { Alert, Button, Field, TextInput, Wordmark } from "@/components/ui";
 
 const registerSchema = z.object({
@@ -99,7 +100,35 @@ export function ForgotPasswordPage() {
   const [notice, setNotice] = useState("");
   const [formError, setFormError] = useState("");
   const [pending, setPending] = useState(false);
+  const [resetStatus, setResetStatus] = useState<PasswordResetStatus | null>(null);
+  const [statusError, setStatusError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .passwordResetStatus()
+      .then((status) => {
+        if (!cancelled) setResetStatus(status);
+      })
+      .catch((error) => {
+        console.error("Password reset status failed", error);
+        if (!cancelled) {
+          setStatusError(
+            error instanceof ApiError
+              ? error.message
+              : "Could not check whether password reset is configured on the server.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   if (user) return <Navigate to="/app/chat" replace />;
+
+  const deliveryUnavailable =
+    resetStatus !== null && !resetStatus.emailReady && !resetStatus.smsReady;
 
   const requestCode = async (event: FormEvent) => {
     event.preventDefault();
@@ -140,6 +169,17 @@ export function ForgotPasswordPage() {
 
   return (
     <Frame title="Reset password" body="The code goes to the email on the account. If the account was created with a phone number, the code is texted to that number.">
+      {statusError ? <Alert>{statusError}</Alert> : null}
+      {deliveryUnavailable ? (
+        <Alert>
+          Password reset is unavailable on this server. An operator must set SMTP_HOST, SMTP_USER, SMTP_PASS, and
+          SMTP_FROM for email, and/or TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM for SMS. Secrets are never
+          shown here.
+        </Alert>
+      ) : null}
+      {resetStatus?.localDevFallback && !resetStatus.emailDeliveryConfigured && !resetStatus.smsDeliveryConfigured ? (
+        <p className="mb-4 text-sm leading-6 text-soft">{resetStatus.notice}</p>
+      ) : null}
       {formError ? <Alert>{formError}</Alert> : null}
       {notice ? <p className="mb-4 text-sm leading-6 text-soft">{notice}</p> : null}
       {sent ? (
@@ -155,9 +195,16 @@ export function ForgotPasswordPage() {
       ) : (
         <form className="space-y-4" onSubmit={(event) => void requestCode(event)}>
           <Field label="Email or phone">
-            <TextInput autoComplete="username" value={identifier} onChange={(event) => setIdentifier(event.target.value)} />
+            <TextInput
+              autoComplete="username"
+              value={identifier}
+              onChange={(event) => setIdentifier(event.target.value)}
+              disabled={deliveryUnavailable}
+            />
           </Field>
-          <Button type="submit" disabled={pending}>{pending ? "Sending…" : "Send code"}</Button>
+          <Button type="submit" disabled={pending || deliveryUnavailable}>
+            {deliveryUnavailable ? "Reset unavailable" : pending ? "Sending…" : "Send code"}
+          </Button>
         </form>
       )}
       <p className="mt-6 text-sm text-soft">

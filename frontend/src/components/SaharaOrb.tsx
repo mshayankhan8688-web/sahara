@@ -7,12 +7,16 @@ const SaharaScene = lazy(() => import("@/components/SaharaScene").then((module) 
 function CssOrb({ mood }: { mood: OrbMood }) {
   return (
     <div className={`orb-stage orb-mood-${mood}`}>
+      <span className="orb-particle" />
+      <span className="orb-particle" />
+      <span className="orb-particle" />
       <div className="orb-ring-outer" />
       <div className="orb-ring" />
       <div className="orb-orbit">
         <span />
       </div>
       <div className="orb-core" />
+      <div className="orb-frame" />
     </div>
   );
 }
@@ -29,8 +33,9 @@ export function SaharaOrb({
 
   return (
     <div className={`orb-hover relative ${className}`} data-mood={mood} aria-hidden="true">
+      <div className="orb-frame pointer-events-none absolute inset-0 rounded-full" />
       {webgl ? (
-        <Suspense fallback={<div className="h-full w-full" />}>
+        <Suspense fallback={<CssOrb mood={mood} />}>
           <SaharaScene animate={!reduce} mood={mood} />
         </Suspense>
       ) : (

@@ -28,6 +28,10 @@ export type StudioGenerateInput = {
   assignmentType?: "essay" | "assignment" | "report" | "outline" | "short-answer" | "detailed-answer";
   wordCount?: number;
   writingStyle?: "simple" | "academic";
+  studyFormat?: "explain" | "quiz" | "mcq" | "summary" | "study-plan";
+  documentType?: "notes" | "summary" | "report" | "study-guide" | "qa";
+  audience?: "school" | "university" | "professional";
+  presentationStyle?: "minimal" | "academic" | "bold";
   slideCount?: number;
   language?: ReplyLanguage;
   companionId?: string;
@@ -94,6 +98,30 @@ export async function generateStudioContent(input: StudioGenerateInput) {
   const notes = input.includeSpeakerNotes ? "Include brief speaker notes in the outline." : "";
   const titleHint = input.title?.trim() ? `Working title: ${input.title.trim()}.` : "";
   const assignment = mode === "assignment" ? assignmentBrief(input) : "";
+  const studyFormatHint =
+    mode === "study" && input.studyFormat
+      ? input.studyFormat === "explain"
+        ? "Format: clear explanation with steps, one example, and key points."
+        : input.studyFormat === "quiz"
+          ? "Format: short quiz with questions and brief answers at the end."
+          : input.studyFormat === "mcq"
+            ? "Format: multiple-choice questions (A–D) with the correct answer marked after each question."
+            : input.studyFormat === "summary"
+              ? "Format: concise topic summary with headings and bullet key points."
+              : "Format: a realistic multi-day study plan with daily goals and checkpoints."
+      : "";
+  const documentHint =
+    mode === "document" && input.documentType
+      ? `Document type: ${input.documentType.replace("-", " ")}. Use clear headings suited to that type.`
+      : "";
+  const pptAudience =
+    mode === "ppt" && input.audience
+      ? `Audience: ${input.audience === "school" ? "school students" : input.audience === "university" ? "university students" : "working professionals"}.`
+      : "";
+  const pptStyle =
+    mode === "ppt" && input.presentationStyle
+      ? `Presentation style: ${input.presentationStyle} (adjust bullet density and tone accordingly).`
+      : "";
 
   const userPrompt = input.prompt.trim();
   const hasFile = Boolean(geminiAttachment || textExtra);
@@ -105,7 +133,9 @@ export async function generateStudioContent(input: StudioGenerateInput) {
         ? "Read the attached instructions carefully and produce the requested academic deliverable from what is actually in the file."
         : "";
 
-  let latest = [userPrompt, studyFileHint, titleHint, level, assignment, slides, notes].filter(Boolean).join("\n");
+  let latest = [userPrompt, studyFileHint, titleHint, level, assignment, studyFormatHint, documentHint, pptAudience, pptStyle, slides, notes]
+    .filter(Boolean)
+    .join("\n");
   latest += textExtra;
   if (!latest.trim()) throw new HttpError(400, "Describe what you need.", "EMPTY_PROMPT");
 

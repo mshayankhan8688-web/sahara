@@ -85,6 +85,18 @@ test("registers, isolates journal entries, and refuses unconfigured AI and place
   assert.equal(places.status, 503);
   assert.equal(places.body.code, "PLACES_NOT_CONFIGURED");
 
+  const resetStatus = await request(app).get("/api/auth/password-reset-status");
+  assert.equal(resetStatus.status, 200);
+  assert.equal(resetStatus.body.emailDeliveryConfigured, false);
+  assert.equal(resetStatus.body.smsDeliveryConfigured, false);
+  assert.equal(resetStatus.body.localDevFallback, false);
+  assert.equal(resetStatus.body.emailReady, false);
+  assert.ok(Array.isArray(resetStatus.body.requiredEnv.email));
+
+  const forgotUnknown = await request(app).post("/api/auth/forgot").set(header).send({ identifier: "missing@example.com" });
+  assert.equal(forgotUnknown.status, 503);
+  assert.equal(forgotUnknown.body.code, "EMAIL_NOT_CONFIGURED");
+
   const forgot = await request(app).post("/api/auth/forgot").set(header).send({ identifier: "ada@example.com" });
   assert.equal(forgot.status, 503);
   assert.equal(forgot.body.code, "EMAIL_NOT_CONFIGURED");

@@ -1,10 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Check, Copy, Download, Mic, Paperclip, RefreshCw, Send, Square } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  Copy,
+  Download,
+  FileText,
+  GraduationCap,
+  HeartHandshake,
+  Image as ImageIcon,
+  MessageCircle,
+  Mic,
+  Paperclip,
+  PenLine,
+  Presentation,
+  Pencil,
+  RefreshCw,
+  Send,
+  Sparkles,
+  Square,
+  Star,
+} from "lucide-react";
 import { ReplyLanguageSelect } from "@/components/ReplyLanguageSelect";
-import { SaharaOrb, type OrbMood } from "@/components/SaharaOrb";
+import { CompanionAvatar, companionGreeting } from "@/components/CompanionAvatar";
+import { SaharaOrb } from "@/components/SaharaOrb";
+import { SafaPortrait } from "@/components/SafaPortrait";
 import { api, ApiError } from "@/lib/api";
-import { downloadBase64File, MODE_META, type ChatMode } from "@/lib/modes";
+import {
+  COMPANIONS_CHANGED,
+  companionAppearanceOf,
+  readStoredCompanionId,
+  writeStoredCompanionId,
+} from "@/lib/companions";
+import { downloadBase64File, MODE_META, presentationFromMarkdown, type ChatMode } from "@/lib/modes";
 import { readReplyLanguage, speechCode, writeReplyLanguage, type ReplyLanguage } from "@/lib/replyLanguage";
 import { pickVoice, preferredLangs, speechScript } from "@/lib/speech";
 import type { ChatMessage, Companion } from "@/lib/types";
@@ -15,11 +43,25 @@ import { MarkdownView } from "@/components/MarkdownView";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const starters = [
-  "I'm feeling low today.",
-  "Help me plan a calm evening.",
-  "Explain this programming idea simply.",
-  "I'm hungry. Please suggest something light.",
+  "I'm feeling lonely.",
+  "I'm overthinking.",
+  "Help me study.",
+  "Write something for me.",
+  "How to stay motivated?",
+  "Just chat.",
 ];
+
+const MODE_ICONS: Record<ChatMode, typeof MessageCircle> = {
+  general: MessageCircle,
+  study: GraduationCap,
+  assignment: BookOpen,
+  ppt: Presentation,
+  document: FileText,
+  exam: BookOpen,
+  emotion: HeartHandshake,
+  writing: PenLine,
+  image: ImageIcon,
+};
 
 const fileTypes: Record<string, string> = {
   "image/jpeg": "image/jpeg",
@@ -118,14 +160,17 @@ export function ChatPage() {
   const [params] = useSearchParams();
   const journalId = params.get("journal") ?? undefined;
   const navigate = useNavigate();
-  const [companions, setCompanions] = useState<Companion[]>([]);
   const [companionId, setCompanionId] = useState("");
+  const [companion, setCompanion] = useState<Companion | null>(null);
   const [chatTitle, setChatTitle] = useState("New chat");
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [file, setFile] = useState<PendingFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(false);
   const [listening, setListening] = useState(false);
   const [speakOn, setSpeakOn] = useState(() => localStorage.getItem("sahara.speak") === "1");
@@ -147,8 +192,11 @@ export function ChatPage() {
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speakToken = useRef(0);
 
-  const companionName = companions.find((item) => item.id === companionId)?.name ?? "Companion";
-  const orbMood: OrbMood = pending ? "thinking" : listening ? "listening" : speakingId ? "speaking" : "idle";
+  const companionName = companion?.name?.trim() || "Safa";
+  const companionAppearance = companionAppearanceOf(companion);
+  const useSafaPortrait = companionAppearance === "female";
+  const greeting = companionGreeting(companionName, companionAppearance);
+  const portraitMood = pending ? "thinking" : listening ? "listening" : speakingId ? "speaking" : "idle";
 
   const stopSpeaking = () => {
     speakToken.current += 1;
@@ -276,20 +324,44 @@ export function ChatPage() {
   };
 
   useEffect(() => {
+    const loadCompanions = () => {
+      api
+        .companions()
+        .then((result) => {
+          const list = result.companions;
+          const saved = readStoredCompanionId();
+          const savedMatch = list.find((item) => item.id === saved);
+          // Honor explicit selection / default; otherwise fall back to Safa, then first companion.
+          const safa = list.find((item) => item.name.trim().toLowerCase() === "safa");
+          const fallback = savedMatch ?? list.find((item) => item.isDefault) ?? safa ?? list[0];
+          if (fallback) {
+            setCompanionId(fallback.id);
+            setCompanion(fallback);
+            writeStoredCompanionId(fallback.id);
+          }
+        })
+        .catch((loadError) => {
+          console.error("Failed to load companions", loadError);
+          setError(loadError instanceof ApiError ? loadError.message : "Companions could not be loaded.");
+        });
+    };
+    loadCompanions();
+    window.addEventListener(COMPANIONS_CHANGED, loadCompanions);
+    return () => window.removeEventListener(COMPANIONS_CHANGED, loadCompanions);
+  }, []);
+
+  useEffect(() => {
     api
-      .companions()
-      .then((result) => {
-        setCompanions(result.companions);
-        const saved = localStorage.getItem("sahara.companionId");
-        const preferred = result.companions.find((item) => item.id === saved);
-        const fallback = preferred ?? result.companions.find((item) => item.isDefault) ?? result.companions[0];
-        if (fallback) setCompanionId(fallback.id);
-      })
+      .favorites()
+      .then((result) => setFavoriteIds(new Set(result.favorites.map((item) => item.messageId))))
       .catch((loadError) => {
-        console.error("Failed to load companions", loadError);
-        setError(loadError instanceof ApiError ? loadError.message : "Companions could not be loaded.");
+        console.error("Failed to load favorites", loadError);
       });
   }, []);
+
+  useEffect(() => {
+    setError("");
+  }, [mode, imageAction]);
 
   useEffect(() => {
     let cancelled = false;
@@ -297,6 +369,11 @@ export function ChatPage() {
     if (!conversationId) {
       setMessages([]);
       setChatTitle("New chat");
+      setDraft("");
+      setFile(null);
+      setError("");
+      setPending(false);
+      sending.current = false;
       return () => {
         cancelled = true;
       };
@@ -307,7 +384,9 @@ export function ChatPage() {
         if (cancelled) return;
         setMessages(result.messages);
         setChatTitle(result.conversation.title || "Chat");
-        if (result.conversation.companionId) setCompanionId(result.conversation.companionId);
+        setRenameDraft(result.conversation.title || "Chat");
+        // Keep AI companion header stable from the user's selected/default companion.
+        // Opening an old thread must not switch the header to Rayyan or rename the companion.
       })
       .catch((loadError) => {
         if (cancelled) return;
@@ -363,15 +442,31 @@ export function ChatPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const send = async (override?: { content?: string; attachment?: PendingFile | null }) => {
+  const formatImageError = (sendError: unknown): string => {
+    if (!(sendError instanceof ApiError)) return "The message could not be sent.";
+    if (sendError.code === "IMAGE_QUOTA") {
+      return "Image generation is out of quota on this API key (often only a few free images per day). Text chat still works. Try Diagram for labeled study charts, or retry later.";
+    }
+    if (sendError.code === "AI_NOT_CONFIGURED" || sendError.code === "IMAGE_MODEL_UNAVAILABLE") {
+      return sendError.message;
+    }
+    return sendError.message;
+  };
+
+  const send = async (override?: {
+    content?: string;
+    attachment?: PendingFile | null;
+    regenerateOfMessageId?: string;
+  }) => {
     const content = (override?.content ?? draft).trim();
     const attachment = override && "attachment" in override ? override.attachment : file;
-    if ((!content && !attachment) || pending || sending.current) return;
-    if (mode === "image" && imageAction === "edit" && !attachment) {
+    const regenerateOfMessageId = override?.regenerateOfMessageId;
+    if ((!content && !attachment && !regenerateOfMessageId) || pending || sending.current) return;
+    if (!regenerateOfMessageId && mode === "image" && imageAction === "edit" && !attachment) {
       setError("Attach an image to edit, then describe the change.");
       return;
     }
-    if (mode === "image" && imageAction !== "edit" && !content) {
+    if (!regenerateOfMessageId && mode === "image" && imageAction !== "edit" && !content) {
       setError("Describe the image or diagram you want.");
       return;
     }
@@ -384,20 +479,24 @@ export function ChatPage() {
       setFile(null);
     }
     stopSpeaking();
-    setMessages((current) => [
-      ...current,
-      {
-        id: optimisticId,
-        sender: "user",
-        kind: "ai",
-        content: content || `Attached ${attachment?.name ?? "file"}`,
-        attachment: attachment ?? undefined,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+    if (regenerateOfMessageId) {
+      setMessages((current) => current.filter((message) => message.id !== regenerateOfMessageId));
+    } else {
+      setMessages((current) => [
+        ...current,
+        {
+          id: optimisticId,
+          sender: "user",
+          kind: "ai",
+          content: content || `Attached ${attachment?.name ?? "file"}`,
+          attachment: attachment ?? undefined,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    }
     try {
       const result =
-        mode === "image"
+        !regenerateOfMessageId && mode === "image"
           ? imageAction === "edit" && attachment
             ? await api.editImage({ conversationId, companionId, prompt: content || "Improve this image.", image: attachment })
             : imageAction === "diagram"
@@ -413,12 +512,25 @@ export function ChatPage() {
               companionId,
               content,
               attachment: attachment ?? undefined,
-              journalId,
+              journalId: regenerateOfMessageId ? undefined : journalId,
               replyLanguage,
               mode,
+              regenerateOfMessageId,
             });
-      setMessages((current) => [...current.filter((message) => message.id !== optimisticId), result.userMessage, result.assistantMessage]);
+      setMessages((current) => {
+        const withoutOptimistic = current.filter((message) => message.id !== optimisticId);
+        const replacedId = regenerateOfMessageId ?? ("replacedMessageId" in result ? result.replacedMessageId : undefined);
+        if (replacedId) {
+          const withoutOld = withoutOptimistic.filter((message) => message.id !== replacedId);
+          const withoutDupUser = withoutOld.some((message) => message.id === result.userMessage.id)
+            ? withoutOld
+            : [...withoutOld, result.userMessage];
+          return [...withoutDupUser.filter((message) => message.id !== result.assistantMessage.id), result.assistantMessage];
+        }
+        return [...withoutOptimistic, result.userMessage, result.assistantMessage];
+      });
       setChatTitle(result.conversation.title || "Chat");
+      setRenameDraft(result.conversation.title || "Chat");
       notifyConversationsChanged();
       notifyUsageChanged();
       const nextId = result.conversation.id;
@@ -426,10 +538,20 @@ export function ChatPage() {
       if (!conversationId || journalId) navigate(`/app/chat/${nextId}`, { replace: true });
     } catch (sendError) {
       console.error("Chat failed", sendError);
-      setMessages((current) => current.filter((message) => message.id !== optimisticId));
-      setDraft(content);
-      setFile(attachment ?? null);
-      setError(sendError instanceof ApiError ? sendError.message : "The message could not be sent.");
+      if (regenerateOfMessageId && conversationId) {
+        try {
+          const restored = await api.conversation(conversationId);
+          setMessages(restored.messages);
+        } catch (restoreError) {
+          console.error("Failed to restore conversation after regenerate error", restoreError);
+          setMessages((current) => current.filter((message) => message.id !== optimisticId));
+        }
+      } else {
+        setMessages((current) => current.filter((message) => message.id !== optimisticId));
+        setDraft(content);
+        setFile(attachment ?? null);
+      }
+      setError(mode === "image" ? formatImageError(sendError) : sendError instanceof ApiError ? sendError.message : "The message could not be sent.");
     } finally {
       sending.current = false;
       setPending(false);
@@ -437,39 +559,145 @@ export function ChatPage() {
   };
 
   const regenerateLast = () => {
+    const lastAssistant = [...messages].reverse().find((message) => message.sender === "assistant" && message.kind === "ai");
     const lastUser = [...messages].reverse().find((message) => message.sender === "user");
-    if (!lastUser || pending) return;
+    if (!lastAssistant || !lastUser || pending || lastAssistant.id.startsWith("local-")) return;
     void send({
       content: lastUser.content,
       attachment: lastUser.attachment
         ? { name: lastUser.attachment.name, mimeType: lastUser.attachment.mimeType, data: lastUser.attachment.data }
         : null,
+      regenerateOfMessageId: lastAssistant.id,
     });
+  };
+
+  const saveTitle = async () => {
+    if (!conversationId) {
+      setRenaming(false);
+      return;
+    }
+    const next = renameDraft.trim().slice(0, 80);
+    if (!next || next === chatTitle) {
+      setRenaming(false);
+      setRenameDraft(chatTitle);
+      return;
+    }
+    try {
+      const result = await api.renameConversation(conversationId, next);
+      setChatTitle(result.conversation.title);
+      setRenameDraft(result.conversation.title);
+      setRenaming(false);
+      notifyConversationsChanged();
+    } catch (renameError) {
+      console.error("Rename failed", renameError);
+      setError(renameError instanceof ApiError ? renameError.message : "Could not rename that chat.");
+      setRenaming(false);
+      setRenameDraft(chatTitle);
+    }
+  };
+
+  const toggleFavorite = async (message: ChatMessage) => {
+    if (!conversationId || message.sender !== "assistant" || message.id.startsWith("local-")) return;
+    const starred = favoriteIds.has(message.id);
+    try {
+      if (starred) {
+        await api.removeFavorite(message.id);
+        setFavoriteIds((current) => {
+          const next = new Set(current);
+          next.delete(message.id);
+          return next;
+        });
+      } else {
+        await api.addFavorite({ messageId: message.id, conversationId, content: message.content.slice(0, 4000) });
+        setFavoriteIds((current) => new Set(current).add(message.id));
+      }
+    } catch (favoriteError) {
+      console.error("Favorite failed", favoriteError);
+      setError(favoriteError instanceof ApiError ? favoriteError.message : "Could not update favorites.");
+    }
   };
 
   const lastAssistantId = [...messages].reverse().find((message) => message.sender === "assistant" && message.kind === "ai")?.id;
 
+  const headerStatus = pending ? "Thinking…" : listening ? "Listening…" : speakingId ? "Speaking…" : "Online";
+
   return (
     <section className="chat-shell flex h-full min-h-0 flex-col">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-elevated/70 px-4 py-3 backdrop-blur-md sm:px-6">
+      <header className="chat-header flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <SaharaOrb className="hidden h-12 w-12 shrink-0 sm:block" mood={orbMood} />
+          <div className="relative hidden sm:block">
+            {useSafaPortrait ? (
+              <SafaPortrait className="h-12 w-12" mood={portraitMood} />
+            ) : (
+              <CompanionAvatar appearance={companionAppearance} name={companionName} className="h-12 w-12" mood={portraitMood} />
+            )}
+            <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-elevated bg-leaf" aria-hidden="true" />
+          </div>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate font-serif text-2xl leading-none sm:text-3xl">{chatTitle}</h1>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <p className="truncate font-serif text-xl leading-none text-ink sm:text-2xl">{companionName}</p>
               <AiMark />
+              <span className="rounded-full bg-lavender-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-lavender">
+                {headerStatus}
+              </span>
             </div>
-            <p className="mt-1 truncate text-xs text-soft">
-              {companionName} · An AI companion. Not a person, therapist, or doctor.
-            </p>
+            <p className="mt-1 text-xs text-soft">Your AI Companion</p>
+            {renaming ? (
+              <form
+                className="mt-1 flex items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveTitle();
+                }}
+              >
+                <input
+                  value={renameDraft}
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                  className="min-w-0 flex-1 rounded-full border border-line bg-muted px-3 py-1 text-xs text-ink"
+                  maxLength={80}
+                  aria-label="Conversation title"
+                  autoFocus
+                />
+                <button type="submit" className="text-xs font-semibold text-accent">
+                  Save
+                </button>
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-soft"
+                  onClick={() => {
+                    setRenaming(false);
+                    setRenameDraft(chatTitle);
+                  }}
+                >
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                <h1 className="chat-title truncate text-[11px] font-medium text-soft/80" title={chatTitle}>
+                  {chatTitle}
+                </h1>
+                {conversationId ? (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-soft transition hover:text-ink"
+                    onClick={() => {
+                      setRenameDraft(chatTitle);
+                      setRenaming(true);
+                    }}
+                    aria-label="Rename conversation"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Rename
+                  </button>
+                ) : null}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <Link to="/app/chat" className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold transition hover:border-accent">
+          <Link to="/app/chat" className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold transition hover:border-accent hover:bg-accent-soft">
             New
-          </Link>
-          <Link to="/app/conversations" className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold transition hover:border-accent">
-            Recent
           </Link>
           <ReplyLanguageSelect
             value={replyLanguage}
@@ -480,43 +708,47 @@ export function ChatPage() {
               if (spoken) setVoiceLang(spoken);
             }}
           />
-          <label className="text-xs text-soft">
-            Companion
-            <select
-              className="ml-2 rounded-full border border-line bg-muted px-3 py-1.5 text-sm text-ink"
-              value={companionId}
-              onChange={(event) => {
-                setCompanionId(event.target.value);
-                localStorage.setItem("sahara.companionId", event.target.value);
-              }}
-            >
-              {companions.map((companion) => (
-                <option key={companion.id} value={companion.id}>
-                  {companion.name}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
       </header>
-      <div className="flex flex-wrap gap-2 border-b border-line bg-elevated/40 px-4 py-2.5 sm:px-6">
-        {MODE_META.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            title={item.hint}
-            onClick={() => setMode(item.id)}
-            className={`mode-tab ${mode === item.id ? "mode-tab-active" : "mode-tab-idle"}`}
-          >
-            {item.short}
-          </button>
-        ))}
-        <Link to={`/app/studio?mode=${mode === "general" ? "study" : mode}`} className="mode-tab text-accent hover:bg-accent-soft">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-elevated/40 px-3 py-2 sm:gap-2 sm:px-6">
+        {MODE_META.map((item) => {
+          const Icon = MODE_ICONS[item.id];
+          return (
+            <button
+              key={item.id}
+              type="button"
+              title={item.hint}
+              onClick={() => setMode(item.id)}
+              className={`mode-tab inline-flex items-center gap-1.5 ${mode === item.id ? "mode-tab-active" : "mode-tab-idle"}`}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+              {item.short}
+            </button>
+          );
+        })}
+        <Link
+          to={`/app/studio?mode=${mode === "general" || mode === "emotion" ? "study" : mode}`}
+          className="mode-tab ml-auto inline-flex items-center gap-1.5 bg-lavender-soft text-lavender hover:opacity-90"
+        >
+          <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
           Open Studio
         </Link>
       </div>
+      {mode === "ppt" ? (
+        <p className="border-b border-line bg-elevated/20 px-4 py-2 text-xs leading-5 text-soft sm:px-6">
+          Chat can outline slides and export a PPTX. For structured multi-slide decks, use{" "}
+          <Link to="/app/studio?mode=ppt" className="font-semibold text-accent">
+            PPT Studio
+          </Link>
+          .
+        </p>
+      ) : null}
       {mode === "image" ? (
-        <div className="flex flex-wrap gap-2 border-b border-line bg-elevated/30 px-4 py-2 sm:px-6">
+        <div className="space-y-2 border-b border-line bg-elevated/30 px-4 py-2 sm:px-6">
+          <p className="text-xs leading-5 text-soft">
+            Images need a Gemini image quota on the server key. Free keys often allow only a few images per day. Use Diagram for labeled study charts without burning image quota the same way.
+          </p>
+        <div className="flex flex-wrap gap-2">
           {(
             [
               ["generate", "Generate image"],
@@ -543,6 +775,7 @@ export function ChatPage() {
                 : "Uses Gemini image models. Needs GEMINI_API_KEY with image quota."}
           </p>
         </div>
+        </div>
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-6 sm:px-6">
@@ -550,14 +783,28 @@ export function ChatPage() {
           {journalId ? <Alert>The selected journal entry will be sent with your next message. Nothing is shared until you press send.</Alert> : null}
           {messages.length === 0 ? (
             <div className="glass-panel welcome-glow mx-auto flex w-full max-w-lg flex-col items-center px-6 py-10 text-center">
-              <SaharaOrb className="h-28 w-28 sm:h-36 sm:w-36" mood={orbMood} />
-              <h2 className="relative mt-5 font-serif text-3xl leading-tight sm:text-4xl">Start when you want</h2>
-              <p className="relative mt-3 text-sm leading-6 text-soft">
-                Mode: {MODE_META.find((item) => item.id === mode)?.label ?? "General Chat"}. Talk about study, assignments, PPT, exams, or feelings. Gemini replies only after you send.
+              {useSafaPortrait ? (
+                <SafaPortrait className="h-32 w-32 sm:h-40 sm:w-40" mood={portraitMood} showHearts />
+              ) : (
+                <CompanionAvatar appearance={companionAppearance} name={companionName} className="h-32 w-32 sm:h-40 sm:w-40" mood={portraitMood} />
+              )}
+              <h2 className="relative mt-5 font-serif text-3xl leading-tight sm:text-4xl">{greeting.title}</h2>
+              <p className="relative mt-3 max-w-md text-sm leading-6 text-soft">
+                {greeting.body}
+                <br />
+                What&apos;s on your mind today?
               </p>
-              <div className="relative mt-5 flex flex-wrap justify-center gap-2">
+              <div className="relative mt-6 grid w-full max-w-md grid-cols-1 gap-2 sm:grid-cols-2">
                 {starters.map((starter) => (
-                  <button key={starter} type="button" className="chip text-left" onClick={() => setDraft(starter)}>
+                  <button
+                    key={starter}
+                    type="button"
+                    className="chip text-left"
+                    onClick={() => {
+                      setError("");
+                      setDraft(starter);
+                    }}
+                  >
                     {starter}
                   </button>
                 ))}
@@ -565,17 +812,34 @@ export function ChatPage() {
             </div>
           ) : null}
           {messages.map((message) => (
-            <article key={message.id} className={`chat-bubble ${message.sender === "user" ? "ml-auto max-w-[40rem]" : "max-w-[40rem]"}`}>
+            <article
+              key={message.id}
+              className={`chat-bubble flex max-w-[min(100%,40rem)] flex-col ${message.sender === "user" ? "ml-auto items-end" : "items-start"}`}
+            >
               <p className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-soft">
-                {message.sender === "user" ? "You" : message.kind === "notice" ? "Notice" : companionName}
+                {message.sender === "user" ? (
+                  "You"
+                ) : message.kind === "notice" ? (
+                  "Notice"
+                ) : (
+                  <>
+                    <span
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-lavender-soft text-[10px] font-bold normal-case tracking-normal text-lavender"
+                      aria-hidden
+                    >
+                      {(companionName || "S").slice(0, 1)}
+                    </span>
+                    {companionName}
+                  </>
+                )}
                 {message.sender === "assistant" && message.kind === "ai" ? <AiMark /> : null}
                 {message.createdAt ? <span className="normal-case tracking-normal opacity-80">{formatTime(message.createdAt)}</span> : null}
               </p>
               <div
-                className={`rounded-3xl px-4 py-3 text-sm leading-7 shadow-[var(--shadow)] ${
+                className={`rounded-[1.35rem] px-4 py-3.5 text-sm leading-7 transition-[box-shadow,border-color] duration-150 ${
                   message.sender === "user"
-                    ? "rounded-br-md bg-accent text-on-accent"
-                    : "rounded-bl-md border border-line bg-elevated/95"
+                    ? "chat-bubble-user rounded-br-md"
+                    : "chat-bubble-assistant rounded-bl-md shadow-[var(--shadow)]"
                 }`}
               >
                 <MessageText content={message.content} />
@@ -596,6 +860,16 @@ export function ChatPage() {
                     ) : null}
                     <button
                       type="button"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-soft transition hover:text-ink disabled:opacity-50"
+                      disabled={!conversationId || message.id.startsWith("local-")}
+                      aria-pressed={favoriteIds.has(message.id)}
+                      onClick={() => void toggleFavorite(message)}
+                    >
+                      <Star className={`h-3.5 w-3.5 ${favoriteIds.has(message.id) ? "fill-accent text-accent" : ""}`} />
+                      {favoriteIds.has(message.id) ? "Saved" : "Save"}
+                    </button>
+                    <button
+                      type="button"
                       className="inline-flex items-center gap-1 text-xs font-semibold text-soft transition hover:text-ink"
                       aria-pressed={speakingId === message.id}
                       onClick={() => (speakingId === message.id ? stopSpeaking() : speak(message.content, message.id))}
@@ -612,7 +886,12 @@ export function ChatPage() {
                             onClick={() => {
                               setExportingId(`${message.id}-pptx`);
                               void api
-                                .studioExport({ format: "pptx", title: chatTitle || "SAHARA presentation", content: message.content })
+                                .studioExport({
+                                  format: "pptx",
+                                  title: chatTitle || "SAHARA presentation",
+                                  content: message.content,
+                                  presentation: presentationFromMarkdown(message.content, chatTitle || "SAHARA presentation"),
+                                })
                                 .then((file) => downloadBase64File(file.filename, file.mimeType, file.data))
                                 .catch((exportError) => {
                                   console.error(exportError);
@@ -703,57 +982,62 @@ export function ChatPage() {
           {error ? (
             <Alert>
               <p>{error}</p>
-              <button type="button" className="mt-2 text-sm font-semibold text-accent" onClick={() => void send()} disabled={pending}>
-                Retry
-              </button>
-            </Alert>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-3 text-xs text-soft">
-            <details className="min-w-0">
-              <summary className="cursor-pointer font-semibold">Voice options</summary>
-              <div className="mt-2 flex flex-wrap items-center gap-3">
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={speakOn}
-                    onChange={(event) => {
-                      setSpeakOn(event.target.checked);
-                      localStorage.setItem("sahara.speak", event.target.checked ? "1" : "0");
-                    }}
-                  />
-                  Read replies aloud
-                </label>
-                <label>
-                  Speed
-                  <select className="ml-2 rounded-full border border-line bg-muted px-2 py-1 text-ink" value={speechRate} onChange={(event) => setSpeechRate(Number(event.target.value))}>
-                    <option value={0.9}>Slow</option>
-                    <option value={1}>Normal</option>
-                    <option value={1.15}>Faster</option>
-                  </select>
-                </label>
-                <label>
-                  Speech language
-                  <select className="ml-2 rounded-full border border-line bg-muted px-2 py-1 text-ink" value={voiceLang} onChange={(event) => setVoiceLang(event.target.value)}>
-                    <option value="en-US">English</option>
-                    <option value="ur-PK">Urdu</option>
-                    <option value="hi-IN">Hindi</option>
-                    <option value="ar">Arabic</option>
-                    <option value="pa-IN">Punjabi</option>
-                    <option value="ps">Pashto</option>
-                    <option value="fr-FR">French</option>
-                    <option value="es-ES">Spanish</option>
-                  </select>
-                </label>
-                <button type="button" className="font-semibold" onClick={stopSpeaking}>
-                  Stop speech
+              <div className="mt-2 flex flex-wrap gap-3">
+                {messages.length > 0 || draft.trim() || file ? (
+                  <button type="button" className="text-sm font-semibold text-accent" onClick={() => void send()} disabled={pending}>
+                    Retry
+                  </button>
+                ) : null}
+                <button type="button" className="text-sm font-semibold text-soft" onClick={() => setError("")}>
+                  Dismiss
                 </button>
               </div>
-            </details>
-          </div>
-          <p className="text-xs leading-5 text-soft">
-            Auto detect answers in the language of your latest message. A chosen language stays until you change it, unless that message asks for another language.
-            {replyLanguage === "roman-urdu" ? " Spoken playback may not read Roman Urdu accurately." : ""} Voice uses this browser’s microphone and speaker. It is not a live conversation, and nothing is saved as an audio recording.
-          </p>
+            </Alert>
+          ) : null}
+          <details className="min-w-0 text-xs text-soft">
+            <summary className="cursor-pointer font-semibold">Voice options</summary>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={speakOn}
+                  onChange={(event) => {
+                    setSpeakOn(event.target.checked);
+                    localStorage.setItem("sahara.speak", event.target.checked ? "1" : "0");
+                  }}
+                />
+                Read replies aloud
+              </label>
+              <label>
+                Speed
+                <select className="ml-2 rounded-full border border-line bg-muted px-2 py-1 text-ink" value={speechRate} onChange={(event) => setSpeechRate(Number(event.target.value))}>
+                  <option value={0.9}>Slow</option>
+                  <option value={1}>Normal</option>
+                  <option value={1.15}>Faster</option>
+                </select>
+              </label>
+              <label>
+                Speech language
+                <select className="ml-2 rounded-full border border-line bg-muted px-2 py-1 text-ink" value={voiceLang} onChange={(event) => setVoiceLang(event.target.value)}>
+                  <option value="en-US">English</option>
+                  <option value="ur-PK">Urdu</option>
+                  <option value="hi-IN">Hindi</option>
+                  <option value="ar">Arabic</option>
+                  <option value="pa-IN">Punjabi</option>
+                  <option value="ps">Pashto</option>
+                  <option value="fr-FR">French</option>
+                  <option value="es-ES">Spanish</option>
+                </select>
+              </label>
+              <button type="button" className="font-semibold" onClick={stopSpeaking}>
+                Stop speech
+              </button>
+            </div>
+            <p className="mt-2 leading-5">
+              Auto detect follows your latest message. Voice uses this browser’s mic/speaker and is not saved as audio.
+              {replyLanguage === "roman-urdu" ? " Spoken playback may not read Roman Urdu accurately." : ""}
+            </p>
+          </details>
           <form
             className="composer-box p-2"
             onSubmit={(event) => {
@@ -788,29 +1072,30 @@ export function ChatPage() {
                   }
                 }}
                 rows={2}
-                placeholder="Ask SAHARA anything…"
+                placeholder={`Message ${companionName}…`}
                 disabled={pending}
-                className="max-h-40 w-full resize-none bg-transparent px-3 py-2 text-base outline-none disabled:opacity-60 sm:text-sm"
+                className="max-h-40 w-full resize-none bg-transparent px-3 py-2.5 text-base outline-none disabled:opacity-60 sm:text-sm"
               />
             </label>
             <div className="flex items-center justify-between gap-2 px-1 pb-1">
               <div className="flex items-center gap-1">
-                <Button type="button" variant="ghost" aria-label="Attach a file" className="h-11 w-11 border-0 bg-transparent px-0 hover:bg-bg" onClick={() => fileInputRef.current?.click()} disabled={pending}>
+                <Button type="button" variant="ghost" aria-label="Attach a file" className="h-11 w-11 border-0 bg-transparent px-0 hover:bg-muted" onClick={() => fileInputRef.current?.click()} disabled={pending}>
                   <Paperclip className="h-4 w-4" />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   aria-label={listening ? "Stop listening" : "Speak instead of typing"}
-                  className={`h-11 w-11 border-0 px-0 hover:bg-bg ${listening ? "mic-live bg-accent-soft text-accent" : "bg-transparent"}`}
+                  className={`h-11 w-11 border-0 px-0 hover:bg-muted ${listening ? "mic-live bg-accent-soft text-accent" : "bg-transparent"}`}
                   onClick={listening ? () => recognitionRef.current?.stop() : listen}
                   disabled={pending}
                 >
                   {listening ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </Button>
               </div>
-              <Button type="submit" aria-label="Send" disabled={pending || (draft.trim().length === 0 && !file)} className="h-11 w-11 px-0">
-                <Send className="h-4 w-4" />
+              <Button type="submit" aria-label="Send" disabled={pending || (draft.trim().length === 0 && !file)} className="h-11 min-w-11 rounded-full px-0 sm:min-w-[5.5rem] sm:px-4">
+                <Send className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Send</span>
               </Button>
             </div>
           </form>

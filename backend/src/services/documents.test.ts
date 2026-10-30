@@ -16,3 +16,10 @@ test("builds pptx docx and pdf buffers from markdown", async () => {
   assert.equal(docx.subarray(0, 2).toString("utf8"), "PK");
   assert.equal(pdf.subarray(0, 4).toString("utf8"), "%PDF");
 });
+
+test("multi-page PDF export succeeds with bufferPages", async () => {
+  const longBody = Array.from({ length: 40 }, (_, i) => `## Section ${i + 1}\n\n${"Paragraph text about databases and indexing. ".repeat(12)}`).join("\n\n");
+  const pdf = await buildPdf("Long Report", longBody);
+  assert.ok(pdf.length > 2000);
+  assert.equal(pdf.subarray(0, 4).toString("utf8"), "%PDF");
+});

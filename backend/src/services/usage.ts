@@ -136,6 +136,34 @@ export async function consumeUsage(userId: string, kind: UsageKind): Promise<Usa
   };
 }
 
+/** Undo a reserved unit when Gemini / generation fails after consumeUsage. */
+export async function refundUsage(userId: string, kind: UsageKind): Promise<void> {
+  const day = usageDayKey();
+  const field = countField[kind];
+  const oid = asObjectId(userId);
+  await Usage.updateOne({ userId: oid, day, [field]: { $gt: 0 } }, { $inc: { [field]: -1 } });
+}
+
+/** Reserve one usage unit, run work, and refund if work throws. */
+export async function withUsage<T>(
+  userId: string,
+  kind: UsageKind,
+  work: () => Promise<T>,
+): Promise<{ result: T; usage: UsageSnapshot }> {
+  const usage = await consumeUsage(userId, kind);
+  try {
+    const result = await work();
+    return { result, usage };
+  } catch (error) {
+    try {
+      await refundUsage(userId, kind);
+    } catch (refundError) {
+      console.error("Failed to refund usage after AI error", refundError);
+    }
+    throw error;
+  }
+}
+
 function usageLimitError(planId: PlanId, kind: UsageKind, used: number, limit: number): HttpError {
   const resetsAt = nextUtcResetIso();
   const label =

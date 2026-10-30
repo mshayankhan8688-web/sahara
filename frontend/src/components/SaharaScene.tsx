@@ -39,20 +39,20 @@ function Orb({ animate, mood }: { animate: boolean; mood: OrbMood }) {
     <group ref={group}>
       <mesh ref={core}>
         <sphereGeometry args={[1, 64, 64]} />
-        <meshStandardMaterial color="#ff8a4c" emissive="#ff8a4c" emissiveIntensity={0.28} roughness={0.28} metalness={0.2} />
+        <meshStandardMaterial color="#e6b39a" emissive="#c9a0d4" emissiveIntensity={0.22} roughness={0.32} metalness={0.16} />
       </mesh>
       <mesh rotation={[1.15, 0.15, 0]}>
-        <torusGeometry args={[1.55, 0.018, 24, 120]} />
-        <meshStandardMaterial color="#f7efe7" emissive="#ff8a4c" emissiveIntensity={0.08} roughness={0.4} metalness={0.08} />
+        <torusGeometry args={[1.55, 0.016, 24, 120]} />
+        <meshStandardMaterial color="#f6f0ea" emissive="#b4a4d4" emissiveIntensity={0.1} roughness={0.42} metalness={0.06} />
       </mesh>
       <mesh rotation={[0.35, 0.9, 0.2]}>
         <torusGeometry args={[1.78, 0.01, 16, 96]} />
-        <meshStandardMaterial color="#ffc4a0" transparent opacity={0.55} roughness={0.5} metalness={0.05} />
+        <meshStandardMaterial color="#e0a8bc" transparent opacity={0.5} roughness={0.5} metalness={0.04} />
       </mesh>
       <group ref={satellite}>
         <mesh>
-          <sphereGeometry args={[0.08, 20, 20]} />
-          <meshStandardMaterial color="#ff8a4c" emissive="#ff8a4c" emissiveIntensity={0.7} />
+          <sphereGeometry args={[0.07, 20, 20]} />
+          <meshStandardMaterial color="#e0a8bc" emissive="#b4a4d4" emissiveIntensity={0.55} />
         </mesh>
       </group>
     </group>
@@ -69,10 +69,11 @@ export function SaharaScene({ animate, mood = "idle" }: { animate: boolean; mood
       frameloop={animate ? "always" : "demand"}
       onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
     >
-      <ambientLight intensity={0.48} />
-      <directionalLight position={[2.5, 2.2, 3.5]} intensity={1.7} />
-      <directionalLight position={[-2.4, -1.2, -1.5]} intensity={0.45} color="#ffc4a0" />
-      <pointLight position={[0.2, 0.8, 2.2]} intensity={0.55} color="#ff8a4c" />
+      <ambientLight intensity={0.52} />
+      <directionalLight position={[2.5, 2.2, 3.5]} intensity={1.45} />
+      <directionalLight position={[-2.4, -1.2, -1.5]} intensity={0.4} color="#b4a4d4" />
+      <pointLight position={[0.2, 0.8, 2.2]} intensity={0.42} color="#e6b39a" />
+      <pointLight position={[-1.2, 0.4, 1.4]} intensity={0.28} color="#e0a8bc" />
       <Orb animate={animate} mood={mood} />
     </Canvas>
   );

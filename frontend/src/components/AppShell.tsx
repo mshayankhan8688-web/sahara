@@ -1,56 +1,20 @@
 import { useEffect, useState } from "react";
 import {
-  BookOpen,
-  Briefcase,
   CalendarDays,
   ChevronsLeft,
   ChevronsRight,
-  GraduationCap,
-  HeartHandshake,
   Home,
   Menu,
   MessageCircle,
   Plus,
-  Presentation,
-  Settings,
-  SlidersHorizontal,
   Sparkles,
-  Star,
-  UserRound,
-  Utensils,
-  Wallet,
   X,
 } from "lucide-react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
 import { ChatHistory } from "@/components/ChatHistory";
-import { UsageMeter } from "@/components/UsageMeter";
 import { Mark, Wordmark } from "@/components/ui";
-
-const primaryLinks = [
-  { to: "/app", label: "Home", icon: Home },
-  { to: "/app/chat", label: "Chat", icon: MessageCircle },
-  { to: "/app/studio", label: "Studio", icon: Sparkles },
-  { to: "/app/plan", label: "My day", icon: CalendarDays },
-  { to: "/app/career", label: "Career", icon: Briefcase },
-];
-
-const moreLinks = [
-  { to: "/app/studio?mode=study", label: "Study", icon: GraduationCap },
-  { to: "/app/studio?mode=assignment", label: "Assignment", icon: BookOpen },
-  { to: "/app/studio?mode=ppt", label: "PPT Maker", icon: Presentation },
-  { to: "/app/studio?mode=emotion", label: "Listen", icon: HeartHandshake },
-  { to: "/app/conversations", label: "Conversations", icon: MessageCircle },
-  { to: "/app/food", label: "Food ideas", icon: Utensils },
-  { to: "/app/journal", label: "Journal", icon: BookOpen },
-  { to: "/app/preferences", label: "Preferences", icon: SlidersHorizontal },
-  { to: "/app/companion", label: "Companion", icon: UserRound },
-  { to: "/app/profile", label: "Profile", icon: UserRound },
-  { to: "/app/settings", label: "Settings", icon: Settings },
-  { to: "/app/pricing", label: "Plans", icon: Wallet },
-  { to: "/app/feedback", label: "Feedback", icon: Star },
-];
 
 const mobileLinks = [
   { to: "/app", label: "Home", icon: Home },
@@ -62,7 +26,6 @@ const mobileLinks = [
 function active(pathname: string, to: string) {
   if (to === "/app") return pathname === "/app";
   if (to === "/app/chat") return pathname === "/app/chat" || pathname.startsWith("/app/chat/");
-  if (to.startsWith("/app/studio")) return pathname === "/app/studio" || pathname.startsWith("/app/studio");
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
@@ -85,13 +48,6 @@ export function AppShell() {
     localStorage.setItem("sahara.sidebar", collapsed ? "collapsed" : "open");
   }, [collapsed]);
 
-  const itemClass = (current: boolean) =>
-    `flex min-h-11 items-center gap-3 rounded-2xl px-3 py-2 text-sm transition duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-      current
-        ? "bg-accent-soft font-semibold text-ink shadow-[inset_3px_0_0_0_var(--accent),0_8px_20px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
-        : "text-soft hover:bg-muted hover:text-ink"
-    } ${collapsed ? "justify-center px-2" : ""}`;
-
   const nav = (compact: boolean) => (
     <div className="flex h-full flex-col">
       <div className={`flex items-center px-4 py-4 ${compact ? "justify-center" : "justify-between"}`}>
@@ -106,57 +62,24 @@ export function AppShell() {
         to="/app/chat"
         end
         title="New chat"
-        className={`mb-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-accent text-sm font-semibold text-on-accent shadow-[var(--shadow)] transition duration-150 hover:-translate-y-px hover:opacity-95 ${
+        className={`new-chat-btn mb-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-full text-sm font-semibold transition duration-150 hover:-translate-y-px ${
           compact ? "mx-2 px-0" : "mx-4 px-4 py-2"
         }`}
       >
         <Plus className="h-4 w-4" aria-hidden="true" />
         {compact ? <span className="sr-only">New chat</span> : "New chat"}
       </NavLink>
-      <div className="min-h-0 flex-1 overflow-hidden border-b border-line">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <ChatHistory compact={compact} />
       </div>
-      <nav className="max-h-[40%] min-h-0 overflow-auto px-3 py-3" aria-label="Dashboard">
-        <ul className="space-y-1">
-          {primaryLinks.map((link) => {
-            const Icon = link.icon;
-            const current = active(location.pathname, link.to);
-            return (
-              <li key={link.to}>
-                <NavLink
-                  to={link.to}
-                  end={link.to === "/app"}
-                  title={link.label}
-                  aria-current={current ? "page" : undefined}
-                  className={itemClass(current)}
-                >
-                  <Icon className={`h-4 w-4 shrink-0 ${current ? "text-accent" : ""}`} aria-hidden="true" />
-                  {compact ? <span className="sr-only">{link.label}</span> : link.label}
-                </NavLink>
-              </li>
-            );
-          })}
-        </ul>
-        {!compact ? <p className="mt-4 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-soft">More</p> : <div className="mt-3 border-t border-line" />}
-        <ul className={`space-y-1 ${compact ? "mt-3" : "mt-2"}`}>
-          {moreLinks.map((link) => {
-            const Icon = link.icon;
-            const current = active(location.pathname, link.to);
-            return (
-              <li key={link.to}>
-                <NavLink to={link.to} title={link.label} aria-current={current ? "page" : undefined} className={itemClass(current)}>
-                  <Icon className={`h-4 w-4 shrink-0 ${current ? "text-accent" : ""}`} aria-hidden="true" />
-                  {compact ? <span className="sr-only">{link.label}</span> : link.label}
-                </NavLink>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
+      {!compact ? (
+        <div className="sidebar-footnote">
+          <p>You&apos;re not alone… Sometimes the most beautiful conversations happen with an AI. ♡</p>
+        </div>
+      ) : null}
       <div className={`border-t border-line p-4 ${compact ? "px-2" : ""}`}>
-        {!compact ? <div className="mb-3"><UsageMeter /></div> : <div className="mb-3"><UsageMeter compact /></div>}
         {!compact ? (
-          <div className="flex items-center gap-3">
+          <Link to="/app/profile" className="flex items-center gap-3 rounded-2xl p-1 transition hover:bg-muted" title="Your profile">
             <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-line bg-muted text-sm font-semibold text-accent">
               {user?.avatar?.data ? (
                 <img src={`data:${user.avatar.mimeType};base64,${user.avatar.data}`} alt="" className="h-full w-full object-cover" />
@@ -166,18 +89,22 @@ export function AppShell() {
             </div>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold">{user?.name}</p>
-              <p className="truncate text-xs text-soft">{user?.email || user?.phone}</p>
+              <p className="truncate text-xs text-soft">Profile &amp; photo</p>
             </div>
-          </div>
+          </Link>
         ) : (
-          <div className="mx-auto grid h-9 w-9 place-items-center overflow-hidden rounded-full border border-line bg-muted text-xs font-semibold text-accent" title={user?.name}>
+          <Link
+            to="/app/profile"
+            className="mx-auto grid h-9 w-9 place-items-center overflow-hidden rounded-full border border-line bg-muted text-xs font-semibold text-accent"
+            title={user?.name}
+          >
             {user?.avatar?.data ? (
               <img src={`data:${user.avatar.mimeType};base64,${user.avatar.data}`} alt="" className="h-full w-full object-cover" />
             ) : (
               (user?.name ?? "S").slice(0, 1).toUpperCase()
             )}
-            <span className="sr-only">{user?.name}</span>
-          </div>
+            <span className="sr-only">{user?.name} profile</span>
+          </Link>
         )}
         <div className={`mt-3 flex gap-2 ${compact ? "flex-col items-center" : ""}`}>
           <button type="button" className="min-h-9 rounded-full border border-line px-3 py-1.5 text-xs transition hover:bg-muted" onClick={toggleTheme} title={theme === "dark" ? "Light" : "Dark"}>
@@ -193,6 +120,9 @@ export function AppShell() {
           >
             {compact ? "Out" : "Sign out"}
           </button>
+          <Link to="/app/settings" className="inline-flex min-h-9 items-center rounded-full border border-line px-3 py-1.5 text-xs transition hover:bg-muted" title="Settings">
+            {compact ? "Set" : "Settings"}
+          </Link>
         </div>
         <button
           type="button"

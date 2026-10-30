@@ -1,6 +1,6 @@
 import { parseAttachment, type ChatAttachment } from "../lib/attachment.js";
 import { HttpError } from "../http.js";
-import { Companion, professionalStyle } from "../models/Companion.js";
+import { Companion, migrateCompanionStyleIfNeeded, professionalStyle } from "../models/Companion.js";
 import { Conversation } from "../models/Conversation.js";
 import { JournalEntry } from "../models/JournalEntry.js";
 import { Message } from "../models/Message.js";
@@ -14,6 +14,22 @@ import { composeReply } from "./gemini.js";
 import type { ReplyLanguage } from "../lib/replyLanguage.js";
 import { titleFrom } from "../lib/titleFrom.js";
 import type { PreferenceView, SearchStatus } from "./prompt.js";
+
+/** Avoid identical sidebar titles when possible (does not rename old chats). */
+async function ensureUniqueTitle(userId: string, base: string, excludeId?: string): Promise<string> {
+  const safe = base.slice(0, 80) || "New chat";
+  const clash = async (title: string) => {
+    const query: Record<string, unknown> = { userId: asObjectId(userId), title };
+    if (excludeId) query._id = { $ne: asObjectId(excludeId) };
+    return Boolean(await Conversation.exists(query));
+  };
+  if (!(await clash(safe))) return safe;
+  for (let n = 2; n <= 9; n += 1) {
+    const candidate = `${safe.slice(0, 74)} (${n})`;
+    if (!(await clash(candidate))) return candidate;
+  }
+  return `${safe.slice(0, 70)}…`;
+}
 
 export async function loadPreferences(userId: string): Promise<PreferenceView | null> {
   const doc = await Preference.findOne({ userId }).lean();
@@ -42,12 +58,35 @@ export async function createChatReply(input: {
   attachment?: { name: string; mimeType: string; data: string };
   replyLanguage?: ReplyLanguage;
   mode?: ChatMode;
+  regenerateOfMessageId?: string;
 }) {
   const user = await User.findById(input.userId);
   if (!user) throw new HttpError(401, "Sign in again.", "UNAUTHENTICATED");
 
   let conversation = null;
-  if (input.conversationId) {
+  let regeneratingAssistantId: string | null = null;
+  let existingUserMessage: Awaited<ReturnType<typeof Message.findOne>> = null;
+
+  if (input.regenerateOfMessageId) {
+    const oldAssistant = await Message.findOne({
+      _id: asObjectId(input.regenerateOfMessageId),
+      userId: input.userId,
+      sender: "assistant",
+      kind: "ai",
+    });
+    if (!oldAssistant) throw new HttpError(404, "That reply was not found.", "NOT_FOUND");
+    conversation = await Conversation.findOne({ _id: oldAssistant.conversationId, userId: input.userId });
+    if (!conversation) throw new HttpError(404, "That conversation was not found.", "NOT_FOUND");
+    existingUserMessage = await Message.findOne({
+      conversationId: conversation._id,
+      userId: input.userId,
+      sender: "user",
+      createdAt: { $lte: oldAssistant.createdAt },
+    }).sort({ createdAt: -1 });
+    if (!existingUserMessage) throw new HttpError(400, "Nothing to regenerate.", "NO_USER_TURN");
+    regeneratingAssistantId = oldAssistant._id.toString();
+    await Message.deleteOne({ _id: oldAssistant._id, userId: input.userId });
+  } else if (input.conversationId) {
     conversation = await Conversation.findOne({ _id: asObjectId(input.conversationId), userId: input.userId });
     if (!conversation) throw new HttpError(404, "That conversation was not found.", "NOT_FOUND");
   }
@@ -57,6 +96,7 @@ export async function createChatReply(input: {
     ? await Companion.findOne({ _id: asObjectId(companionId), userId: input.userId })
     : await Companion.findOne({ userId: input.userId, isDefault: true });
   if (!companion) throw new HttpError(400, "Choose a companion first.", "NO_COMPANION");
+  // Soft-upgrade language rules + legacy default Safa voice. Does not touch Message/Conversation docs.
   if (companion.style.includes("Reply only in professional English.") || companion.style.includes("Match the language the person wrote: clear English")) {
     const stale = await Companion.find({
       userId: input.userId,
@@ -68,6 +108,7 @@ export async function createChatReply(input: {
     }
     companion.style = professionalStyle(companion.style);
   }
+  const companionStyle = await migrateCompanionStyleIfNeeded(companion);
 
   let attachment: ChatAttachment | undefined;
   let officeExtra = "";
@@ -78,12 +119,23 @@ export async function createChatReply(input: {
     } else {
       attachment = parseAttachment(input.attachment);
     }
+  } else if (regeneratingAssistantId && existingUserMessage?.attachment?.data) {
+    const stored = existingUserMessage.attachment;
+    if (stored.name && stored.mimeType && stored.data) {
+      const office = await extractOfficeText({ name: stored.name, mimeType: stored.mimeType, data: stored.data });
+      if (office) {
+        officeExtra = `\n\n---\nExtracted text from ${office.name}:\n${office.text}`;
+      } else {
+        attachment = parseAttachment({ name: stored.name, mimeType: stored.mimeType, data: stored.data });
+      }
+    }
   }
-  const spoken = input.content.trim();
+
+  const spoken = (input.content.trim() || (regeneratingAssistantId ? existingUserMessage?.content ?? "" : "")).trim();
   let latest = spoken || (attachment || officeExtra ? "I attached a file. Please read it." : "");
   if (!latest) throw new HttpError(400, "Write a message or attach a file.", "EMPTY_MESSAGE");
   latest += officeExtra;
-  if (input.journalId) {
+  if (input.journalId && !regeneratingAssistantId) {
     const entry = await JournalEntry.findOne({ _id: asObjectId(input.journalId), userId: input.userId });
     if (!entry || !entry.content.trim()) throw new HttpError(404, "That journal entry was not found.", "NOT_FOUND");
     latest = `${latest}\n\n---\nShared journal entry:\n${entry.content.trim()}`;
@@ -92,7 +144,12 @@ export async function createChatReply(input: {
   const historyDocs = conversation
     ? await Message.find({ conversationId: conversation._id, userId: input.userId }).sort({ createdAt: 1 }).limit(20).lean()
     : [];
-  const history = historyDocs.map((message) => ({
+  // When regenerating, drop the trailing user turn from history — it is re-supplied as `latest`.
+  const historySource =
+    regeneratingAssistantId && historyDocs.length && historyDocs[historyDocs.length - 1]?.sender === "user"
+      ? historyDocs.slice(0, -1)
+      : historyDocs;
+  const history = historySource.map((message) => ({
     sender: message.sender as "user" | "assistant",
     content: message.content,
   }));
@@ -104,7 +161,7 @@ export async function createChatReply(input: {
   const kind = "ai" as const;
   const content = await composeReply({
     companionName: companion.name,
-    companionStyle: companion.style,
+    companionStyle,
     preferences,
     history,
     latest,
@@ -114,31 +171,38 @@ export async function createChatReply(input: {
     mode,
   });
 
+  const baseTitle = titleFrom(spoken || attachment?.name || "New chat");
+  const uniqueTitle = await ensureUniqueTitle(input.userId, baseTitle, conversation?._id?.toString());
   if (!conversation) {
     conversation = await Conversation.create({
       userId: input.userId,
       companionId: companion._id,
-      title: titleFrom(spoken || attachment?.name || "New chat"),
+      title: uniqueTitle,
     });
-  } else if (history.length === 0) {
-    conversation.title = titleFrom(spoken || attachment?.name || "New chat");
+  } else if (historyDocs.length === 0 && !regeneratingAssistantId) {
+    conversation.title = uniqueTitle;
   }
   conversation.updatedAt = new Date();
   await conversation.save();
 
-  const storedUserContent = (
-    spoken ||
-    (attachment || officeExtra ? `Attached ${attachment?.name ?? input.attachment?.name ?? "file"}` : "")
-  ).slice(0, 4000);
-  const userMessage = await Message.create({
-    conversationId: conversation._id,
-    userId: input.userId,
-    sender: "user",
-    kind: "ai",
-    content: storedUserContent,
-    attachment,
-    places: [],
-  });
+  let userMessage = existingUserMessage;
+  if (!regeneratingAssistantId) {
+    const storedUserContent = (
+      spoken ||
+      (attachment || officeExtra ? `Attached ${attachment?.name ?? input.attachment?.name ?? "file"}` : "")
+    ).slice(0, 4000);
+    userMessage = await Message.create({
+      conversationId: conversation._id,
+      userId: input.userId,
+      sender: "user",
+      kind: "ai",
+      content: storedUserContent,
+      attachment,
+      places: [],
+    });
+  }
+  if (!userMessage) throw new HttpError(500, "Could not save the message.", "INTERNAL");
+
   const assistantMessage = await Message.create({
     conversationId: conversation._id,
     userId: input.userId,
@@ -157,6 +221,7 @@ export async function createChatReply(input: {
     },
     userMessage: serializeMessage(userMessage),
     assistantMessage: serializeMessage(assistantMessage),
+    replacedMessageId: regeneratingAssistantId ?? undefined,
   };
 }
 

@@ -1,24 +1,40 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
-import { formatChatTime, notifyConversationsChanged } from "@/lib/conversations";
+import { CONVERSATIONS_CHANGED, formatChatTime, notifyConversationsChanged } from "@/lib/conversations";
 import type { Conversation } from "@/lib/types";
 import { Alert, Button, ConfirmDialog, EmptyState, PageHeader, TextInput } from "@/components/ui";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
+function activeConversationId(pathname: string): string {
+  if (!pathname.startsWith("/app/chat/")) return "";
+  const rest = pathname.slice("/app/chat/".length);
+  return rest.split(/[/?#]/)[0] ?? "";
+}
+
 export function ConversationsPage() {
   useDocumentTitle("Conversations");
+  const location = useLocation();
+  const navigate = useNavigate();
   const [items, setItems] = useState<Conversation[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [pending, setPending] = useState<Conversation | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const loadGeneration = useRef(0);
 
   const load = () => {
+    const generation = ++loadGeneration.current;
     api
       .conversations()
-      .then((result) => setItems(result.conversations))
+      .then((result) => {
+        if (generation !== loadGeneration.current) return;
+        setItems(result.conversations);
+      })
       .catch((loadError) => {
+        if (generation !== loadGeneration.current) return;
         console.error("Failed to load conversations", loadError);
         setError(loadError instanceof ApiError ? loadError.message : "Conversations could not be loaded.");
       });
@@ -26,12 +42,40 @@ export function ConversationsPage() {
 
   useEffect(() => {
     load();
+    const onChange = () => load();
+    window.addEventListener(CONVERSATIONS_CHANGED, onChange);
+    return () => window.removeEventListener(CONVERSATIONS_CHANGED, onChange);
   }, []);
+
+  const confirmDelete = async () => {
+    if (!pending || deleting) return;
+    const target = pending;
+    setDeleting(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.deleteConversation(target.id);
+      loadGeneration.current += 1;
+      setItems((current) => current.filter((item) => item.id !== target.id));
+      setPending(null);
+      setNotice(`Deleted “${target.title}”.`);
+      if (activeConversationId(location.pathname) === target.id) {
+        navigate("/app/chat", { replace: true });
+      }
+      notifyConversationsChanged();
+    } catch (deleteError) {
+      console.error("Failed to delete conversation", deleteError);
+      setError(deleteError instanceof ApiError ? deleteError.message : "Could not delete that conversation.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="h-full overflow-auto px-4 py-6 sm:px-8">
       <PageHeader eyebrow="Yours only" title="Conversations" body="Chats stay on your account. Other people cannot open them. New Chat never deletes old threads." />
       {error ? <Alert>{error}</Alert> : null}
+      {notice ? <p className="mb-4 text-sm text-leaf">{notice}</p> : null}
       {items.length === 0 ? (
         <EmptyState title="No threads yet" body="A conversation is saved after Gemini replies." action={<Link to="/app/chat" className="text-sm text-accent">New chat</Link>} />
       ) : (
@@ -95,21 +139,14 @@ export function ConversationsPage() {
       {pending ? (
         <ConfirmDialog
           title="Delete this conversation?"
-          body="Only this chat and its messages are removed. Other chats stay saved."
-          confirmLabel="Delete"
-          onClose={() => setPending(null)}
+          body={`“${pending.title}” and its messages will be permanently removed. Other chats stay saved.`}
+          confirmLabel="Delete forever"
+          busy={deleting}
+          onClose={() => {
+            if (!deleting) setPending(null);
+          }}
           onConfirm={() => {
-            void api
-              .deleteConversation(pending.id)
-              .then(() => {
-                notifyConversationsChanged();
-                load();
-              })
-              .catch((deleteError) => {
-                console.error("Failed to delete conversation", deleteError);
-                setError(deleteError instanceof ApiError ? deleteError.message : "Could not delete that conversation.");
-              });
-            setPending(null);
+            void confirmDelete();
           }}
         />
       ) : null}

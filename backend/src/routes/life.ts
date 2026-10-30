@@ -8,7 +8,7 @@ import { validateBody } from "../middleware/validate.js";
 import { Plan } from "../models/Plan.js";
 import { Task } from "../models/Task.js";
 import { writeGuide } from "../services/guide.js";
-import { consumeUsage } from "../services/usage.js";
+import { withUsage } from "../services/usage.js";
 
 function taskJson(task: { _id: { toString(): string }; title: string; notes?: string; dueOn?: string; priority?: string; done?: boolean; createdAt?: Date }) {
   return {
@@ -110,8 +110,9 @@ guideRouter.post(
   chatLimiter,
   validateBody(guideSchema),
   asyncHandler(async (req, res) => {
-    const usage = await consumeUsage(req.user!.id, "chat");
-    const content = await writeGuide(req.user!.id, req.body.kind, req.body.prompt, req.body.replyLanguage);
+    const { result: content, usage } = await withUsage(req.user!.id, "chat", () =>
+      writeGuide(req.user!.id, req.body.kind, req.body.prompt, req.body.replyLanguage),
+    );
     res.json({ content, usage });
   }),
 );

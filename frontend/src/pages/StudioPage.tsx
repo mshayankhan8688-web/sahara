@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Copy, Download, FileText, Pencil, Presentation, RefreshCw, Sparkles } from "lucide-react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { downloadBase64File, MODE_META, modeMeta, type ChatMode } from "@/lib/modes";
 import { normalizeStudioMarkdown } from "@/lib/markdownNormalize";
@@ -22,6 +22,10 @@ type StudioResult = {
 };
 
 type AssignmentType = "essay" | "assignment" | "report" | "outline" | "short-answer" | "detailed-answer";
+type StudyFormat = "explain" | "quiz" | "mcq" | "summary" | "study-plan";
+type DocumentType = "notes" | "summary" | "report" | "study-guide" | "qa";
+type PptAudience = "school" | "university" | "professional";
+type PptStyle = "minimal" | "academic" | "bold";
 
 const STUDIO_MODES = MODE_META.filter((item) => item.studio);
 
@@ -34,7 +38,35 @@ const ASSIGNMENT_TYPES: { id: AssignmentType; label: string }[] = [
   { id: "detailed-answer", label: "Detailed answer" },
 ];
 
+const STUDY_FORMATS: { id: StudyFormat; label: string }[] = [
+  { id: "explain", label: "Explain" },
+  { id: "quiz", label: "Quiz" },
+  { id: "mcq", label: "MCQs" },
+  { id: "summary", label: "Summary" },
+  { id: "study-plan", label: "Study plan" },
+];
+
+const DOCUMENT_TYPES: { id: DocumentType; label: string }[] = [
+  { id: "notes", label: "Notes" },
+  { id: "summary", label: "Summary" },
+  { id: "report", label: "Report" },
+  { id: "study-guide", label: "Study guide" },
+  { id: "qa", label: "Q&A" },
+];
+
 const WORD_COUNTS = [300, 500, 800, 1000, 1500, 2000];
+
+function presentationToMarkdown(presentation: NonNullable<StudioResult["presentation"]>): string {
+  return [
+    `# ${presentation.title}`,
+    ...presentation.slides.map(
+      (slide, index) =>
+        `## Slide ${index + 1}: ${slide.title}\n${slide.bullets.map((bullet) => `- ${bullet}`).join("\n")}${
+          slide.notes ? `\n\nNotes: ${slide.notes}` : ""
+        }`,
+    ),
+  ].join("\n\n");
+}
 
 function readFileAsAttachment(file: File): Promise<{ name: string; mimeType: string; data: string }> {
   return new Promise((resolve, reject) => {
@@ -59,6 +91,7 @@ function readFileAsAttachment(file: File): Promise<{ name: string; mimeType: str
 
 export function StudioPage() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const initial = (params.get("mode") as ChatMode | null) ?? "study";
   const [mode, setMode] = useState<ChatMode>(STUDIO_MODES.some((item) => item.id === initial) ? initial : "study");
   const [prompt, setPrompt] = useState("");
@@ -68,6 +101,10 @@ export function StudioPage() {
   const [assignmentType, setAssignmentType] = useState<AssignmentType>("essay");
   const [wordCount, setWordCount] = useState(800);
   const [writingStyle, setWritingStyle] = useState<"simple" | "academic">("academic");
+  const [studyFormat, setStudyFormat] = useState<StudyFormat>("explain");
+  const [documentType, setDocumentType] = useState<DocumentType>("notes");
+  const [pptAudience, setPptAudience] = useState<PptAudience>("university");
+  const [pptStyle, setPptStyle] = useState<PptStyle>("academic");
   const [replyLanguage, setReplyLanguage] = useState<ReplyLanguage>(() => readReplyLanguage());
   const [slideCount, setSlideCount] = useState(8);
   const [error, setError] = useState("");
@@ -85,6 +122,11 @@ export function StudioPage() {
 
   useEffect(() => {
     const next = params.get("mode");
+    // Listen needs multi-turn chat, not a one-shot Studio generate.
+    if (next === "emotion") {
+      navigate("/app/chat?mode=emotion", { replace: true });
+      return;
+    }
     if (next && STUDIO_MODES.some((item) => item.id === next) && next !== mode) {
       setMode(next as ChatMode);
       setResult(null);
@@ -119,7 +161,15 @@ export function StudioPage() {
 
   const generate = async () => {
     const requestPrompt = mode === "assignment" ? buildAssignmentPrompt() : prompt.trim();
-    if (pending || requestPrompt.length < 2) return;
+    if (pending) return;
+    if (mode === "assignment" && !(title.trim() || prompt.trim())) {
+      setError("Enter a topic or title for the assignment.");
+      return;
+    }
+    if (requestPrompt.length < 2) {
+      setError(mode === "emotion" ? "Share a little about how you feel." : "Describe what SAHARA should create.");
+      return;
+    }
     setPending(true);
     setError("");
     setImagePreview(null);
@@ -155,6 +205,10 @@ export function StudioPage() {
         assignmentType: mode === "assignment" ? assignmentType : undefined,
         wordCount: mode === "assignment" ? wordCount : undefined,
         writingStyle: mode === "assignment" ? writingStyle : undefined,
+        studyFormat: mode === "study" ? studyFormat : undefined,
+        documentType: mode === "document" ? documentType : undefined,
+        audience: mode === "ppt" ? pptAudience : undefined,
+        presentationStyle: mode === "ppt" ? pptStyle : undefined,
         slideCount: mode === "ppt" ? slideCount : undefined,
         includeSpeakerNotes: mode === "ppt",
         replyLanguage,
@@ -228,9 +282,7 @@ export function StudioPage() {
               setImagePreview(null);
               setEditing(false);
               setError("");
-              const url = new URL(window.location.href);
-              url.searchParams.set("mode", item.id);
-              window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
+              navigate(`/app/studio?mode=${item.id}`, { replace: true });
             }}
             className={`mode-tab ${mode === item.id ? "mode-tab-active" : "mode-tab-idle"}`}
           >
@@ -368,17 +420,75 @@ export function StudioPage() {
             </>
           ) : null}
 
-          {mode === "ppt" ? (
-            <Field label={`Slides: ${slideCount}`}>
-              <input
-                type="range"
-                min={4}
-                max={16}
-                value={slideCount}
-                onChange={(event) => setSlideCount(Number(event.target.value))}
-                className="w-full"
-              />
+          {mode === "study" ? (
+            <Field label="Study format">
+              <select
+                className="w-full rounded-2xl border border-line bg-muted px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent"
+                value={studyFormat}
+                onChange={(event) => setStudyFormat(event.target.value as StudyFormat)}
+              >
+                {STUDY_FORMATS.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
             </Field>
+          ) : null}
+
+          {mode === "document" ? (
+            <Field label="Document type">
+              <select
+                className="w-full rounded-2xl border border-line bg-muted px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent"
+                value={documentType}
+                onChange={(event) => setDocumentType(event.target.value as DocumentType)}
+              >
+                {DOCUMENT_TYPES.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
+
+          {mode === "ppt" ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Audience">
+                  <select
+                    className="w-full rounded-2xl border border-line bg-muted px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent"
+                    value={pptAudience}
+                    onChange={(event) => setPptAudience(event.target.value as PptAudience)}
+                  >
+                    <option value="school">School</option>
+                    <option value="university">University</option>
+                    <option value="professional">Professional</option>
+                  </select>
+                </Field>
+                <Field label="Style">
+                  <select
+                    className="w-full rounded-2xl border border-line bg-muted px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent"
+                    value={pptStyle}
+                    onChange={(event) => setPptStyle(event.target.value as PptStyle)}
+                  >
+                    <option value="minimal">Minimal</option>
+                    <option value="academic">Academic</option>
+                    <option value="bold">Bold</option>
+                  </select>
+                </Field>
+              </div>
+              <Field label={`Slides: ${slideCount}`}>
+                <input
+                  type="range"
+                  min={4}
+                  max={16}
+                  value={slideCount}
+                  onChange={(event) => setSlideCount(Number(event.target.value))}
+                  className="w-full"
+                />
+              </Field>
+            </>
           ) : null}
 
           {mode !== "assignment" ? (
@@ -494,17 +604,67 @@ export function StudioPage() {
                 <div className="mt-3 max-h-[32rem] overflow-auto rounded-2xl border border-line bg-muted/40 p-4">
                   {mode === "ppt" && result.presentation?.slides?.length ? (
                     <div className="space-y-3">
-                      <p className="text-sm font-semibold text-ink">{result.presentation.title}</p>
+                      <label className="block text-xs font-semibold text-soft">
+                        Deck title
+                        <input
+                          className="mt-1 w-full rounded-xl border border-line bg-elevated px-3 py-2 text-sm font-semibold text-ink"
+                          value={result.presentation.title}
+                          onChange={(event) => {
+                            const presentation = {
+                              ...result.presentation!,
+                              title: event.target.value,
+                            };
+                            setResult({
+                              ...result,
+                              title: event.target.value || result.title,
+                              presentation,
+                              content: presentationToMarkdown(presentation),
+                            });
+                          }}
+                        />
+                      </label>
                       {result.presentation.slides.map((slide, index) => (
-                        <article key={`${slide.title}-${index}`} className="rounded-2xl border border-line bg-elevated/80 p-4">
+                        <article key={`slide-${index}`} className="rounded-2xl border border-line bg-elevated/80 p-4">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">Slide {index + 1}</p>
-                          <h3 className="mt-1 font-serif text-lg text-ink">{slide.title}</h3>
-                          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-soft">
-                            {slide.bullets.map((bullet) => (
-                              <li key={bullet}>{bullet}</li>
-                            ))}
-                          </ul>
-                          {slide.notes ? <p className="mt-2 text-xs italic text-soft">Notes: {slide.notes}</p> : null}
+                          <input
+                            className="mt-2 w-full rounded-xl border border-line bg-muted px-3 py-2 font-serif text-lg text-ink"
+                            value={slide.title}
+                            onChange={(event) => {
+                              const slides = result.presentation!.slides.map((item, slideIndex) =>
+                                slideIndex === index ? { ...item, title: event.target.value } : item,
+                              );
+                              const presentation = { ...result.presentation!, slides };
+                              setResult({ ...result, presentation, content: presentationToMarkdown(presentation) });
+                            }}
+                          />
+                          <TextArea
+                            className="mt-2 min-h-[6rem] text-sm leading-6"
+                            value={slide.bullets.join("\n")}
+                            onChange={(event) => {
+                              const bullets = event.target.value
+                                .split("\n")
+                                .map((line) => line.replace(/^[-*•]\s*/, "").trim())
+                                .filter(Boolean)
+                                .slice(0, 10);
+                              const slides = result.presentation!.slides.map((item, slideIndex) =>
+                                slideIndex === index ? { ...item, bullets } : item,
+                              );
+                              const presentation = { ...result.presentation!, slides };
+                              setResult({ ...result, presentation, content: presentationToMarkdown(presentation) });
+                            }}
+                          />
+                          <input
+                            className="mt-2 w-full rounded-xl border border-line bg-muted px-3 py-2 text-xs italic text-soft"
+                            value={slide.notes ?? ""}
+                            placeholder="Speaker notes (optional)"
+                            onChange={(event) => {
+                              const slides = result.presentation!.slides.map((item, slideIndex) =>
+                                slideIndex === index ? { ...item, notes: event.target.value } : item,
+                              );
+                              const presentation = { ...result.presentation!, slides };
+                              setResult({ ...result, presentation, content: presentationToMarkdown(presentation) });
+                            }}
+                          />
                         </article>
                       ))}
                     </div>

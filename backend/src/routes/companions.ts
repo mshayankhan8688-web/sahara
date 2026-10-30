@@ -2,19 +2,36 @@ import { Router } from "express";
 import { asyncHandler, HttpError } from "../http.js";
 import { asObjectId, routeParam } from "../lib/objectId.js";
 import { companionSchema } from "../lib/schemas.js";
-import { Companion } from "../models/Companion.js";
+import { Companion, type CompanionAppearance } from "../models/Companion.js";
 import { requireUser } from "../middleware/auth.js";
 import { validateBody } from "../middleware/validate.js";
 
 export const companionRouter = Router();
 companionRouter.use(requireUser);
 
-function present(companion: { id?: string; _id: { toString(): string }; name: string; description?: string; style: string; isDefault?: boolean }) {
+function inferAppearance(name: string, appearance?: string | null): CompanionAppearance {
+  if (appearance === "female" || appearance === "male" || appearance === "neutral") return appearance;
+  const key = name.trim().toLowerCase();
+  if (key === "rayyan") return "male";
+  if (key === "sahara" || key === "nova") return "neutral";
+  return "female";
+}
+
+function present(companion: {
+  id?: string;
+  _id: { toString(): string };
+  name: string;
+  description?: string;
+  style: string;
+  appearance?: string | null;
+  isDefault?: boolean;
+}) {
   return {
     id: companion.id ?? companion._id.toString(),
     name: companion.name,
     description: companion.description ?? "",
     style: companion.style,
+    appearance: inferAppearance(companion.name, companion.appearance),
     isDefault: Boolean(companion.isDefault),
   };
 }
@@ -37,6 +54,7 @@ companionRouter.post(
       name: req.body.name,
       description: req.body.description,
       style: req.body.style,
+      appearance: req.body.appearance ?? "female",
       isDefault: count === 0,
     });
     res.status(201).json({ companion: present(companion) });
@@ -49,7 +67,12 @@ companionRouter.put(
   asyncHandler(async (req, res) => {
     const companion = await Companion.findOneAndUpdate(
       { _id: asObjectId(routeParam(req.params.id)), userId: req.user!.id },
-      { name: req.body.name, description: req.body.description, style: req.body.style },
+      {
+        name: req.body.name,
+        description: req.body.description,
+        style: req.body.style,
+        appearance: req.body.appearance ?? "female",
+      },
       { new: true },
     );
     if (!companion) throw new HttpError(404, "That companion was not found.", "NOT_FOUND");

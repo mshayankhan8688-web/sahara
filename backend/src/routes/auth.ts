@@ -15,14 +15,37 @@ import { Plan } from "../models/Plan.js";
 import { Task } from "../models/Task.js";
 import { Preference } from "../models/Preference.js";
 import { User } from "../models/User.js";
+import { Usage } from "../models/Usage.js";
+import { Favorite } from "../models/Favorite.js";
+import { StudyGoal } from "../models/StudyGoal.js";
 import { requireUser } from "../middleware/auth.js";
 import { authLimiter } from "../middleware/limits.js";
 import { validateBody } from "../middleware/validate.js";
 import { parseAvatar } from "../lib/attachment.js";
 import { deleteSchema, forgotSchema, locationSchema, loginSchema, passwordSchema, profileSchema, registerSchema, resetSchema } from "../lib/schemas.js";
-import { sendResetCode } from "../services/resetDelivery.js";
+import { assertDeliveryReady, getPasswordResetStatus, sendResetCode } from "../services/resetDelivery.js";
 
 export const authRouter = Router();
+
+authRouter.get(
+  "/password-reset-status",
+  asyncHandler(async (_req, res) => {
+    const status = getPasswordResetStatus();
+    res.json({
+      emailReady: status.emailReady,
+      smsReady: status.smsReady,
+      emailDeliveryConfigured: status.emailDeliveryConfigured,
+      smsDeliveryConfigured: status.smsDeliveryConfigured,
+      localDevFallback: status.localDevFallback,
+      requiredEnv: status.requiredEnv,
+      notice: status.emailDeliveryConfigured || status.smsDeliveryConfigured
+        ? "Password reset codes can be delivered when an account matches the email or phone you enter."
+        : status.localDevFallback
+          ? "SMTP/Twilio are not configured. In local development the reset code is shown on screen."
+          : "Password reset is unavailable until the server operator configures SMTP (email) and/or Twilio (SMS). See backend .env.example.",
+    });
+  }),
+);
 
 function publicUser(user: {
   id?: string;
@@ -59,16 +82,26 @@ function publicUser(user: {
   };
 }
 
-function sendSession(res: import("express").Response, userId: string, tokenVersion: number) {
-  const token = signSession(userId, tokenVersion);
-  res.cookie("heartspace_session", token, {
+function sessionCookieOptions() {
+  return {
     httpOnly: true,
     secure: config.cookieSecure,
     sameSite: config.cookieSameSite,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
     path: "/",
+  } as const;
+}
+
+function sendSession(res: import("express").Response, userId: string, tokenVersion: number) {
+  const token = signSession(userId, tokenVersion);
+  res.cookie("heartspace_session", token, {
+    ...sessionCookieOptions(),
+    maxAge: 7 * 24 * 60 * 60 * 1000,
   });
   return token;
+}
+
+function clearSessionCookie(res: import("express").Response) {
+  res.clearCookie("heartspace_session", sessionCookieOptions());
 }
 
 authRouter.post(
@@ -133,6 +166,8 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const identifier = readIdentifier(req.body.identifier);
     if (!identifier) throw new HttpError(400, "Enter a valid email or phone number.", "INVALID_IDENTIFIER");
+    // Fail closed before user lookup so missing delivery config cannot leak whether an account exists.
+    assertDeliveryReady(identifier.channel);
     const user =
       identifier.channel === "email"
         ? await User.findOne({ email: identifier.destination })
@@ -206,7 +241,7 @@ authRouter.post(
   requireUser,
   asyncHandler(async (req, res) => {
     await User.updateOne({ _id: req.user!.id }, { $inc: { tokenVersion: 1 } });
-    res.clearCookie("heartspace_session", { path: "/" });
+    clearSessionCookie(res);
     res.status(204).end();
   }),
 );
@@ -308,8 +343,11 @@ authRouter.delete(
     await Task.deleteMany({ userId });
     await Plan.deleteMany({ userId });
     await Feedback.deleteMany({ userId });
+    await Usage.deleteMany({ userId });
+    await Favorite.deleteMany({ userId });
+    await StudyGoal.deleteMany({ userId });
     await user.deleteOne();
-    res.clearCookie("heartspace_session", { path: "/" });
+    clearSessionCookie(res);
     res.status(204).end();
   }),
 );

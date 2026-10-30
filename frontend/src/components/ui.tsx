@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import { createPortal } from "react-dom";
 import { textDirection } from "@/lib/speech";
 
 export function Mark({ className = "h-8 w-8" }: { className?: string }) {
@@ -118,20 +119,23 @@ export function ConfirmDialog({
   confirmLabel,
   onConfirm,
   onClose,
+  busy = false,
 }: {
   title: string;
   body: string;
   confirmLabel: string;
   onConfirm: () => void;
   onClose: () => void;
+  busy?: boolean;
 }) {
-  return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 px-4" onClick={onClose}>
+  // Portal to body so dialogs are not clipped by sidebar overflow / backdrop-filter containing blocks.
+  return createPortal(
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/55 px-4" onClick={busy ? undefined : onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="dialog-title"
-        className="w-full max-w-md rounded-3xl border border-line bg-elevated p-6"
+        className="w-full max-w-md rounded-3xl border border-line bg-elevated p-6 shadow-[var(--shadow)]"
         onClick={(event) => event.stopPropagation()}
       >
         <h2 id="dialog-title" className="font-serif text-3xl">
@@ -139,14 +143,23 @@ export function ConfirmDialog({
         </h2>
         <p className="mt-2 text-sm leading-6 text-soft">{body}</p>
         <div className="mt-6 flex justify-end gap-2">
-          <Button variant="ghost" type="button" onClick={onClose}>
+          <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="danger" type="button" onClick={onConfirm}>
-            {confirmLabel}
+          <Button
+            variant="danger"
+            type="button"
+            disabled={busy}
+            onClick={(event) => {
+              event.stopPropagation();
+              onConfirm();
+            }}
+          >
+            {busy ? "Deleting…" : confirmLabel}
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

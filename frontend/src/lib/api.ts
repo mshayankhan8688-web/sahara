@@ -5,6 +5,7 @@ import type {
   Conversation,
   Health,
   JournalEntry,
+  PasswordResetStatus,
   Preferences,
   SavedPlan,
   Task,
@@ -77,6 +78,7 @@ export const api = {
     request<{ user: User; token: string }>("/api/auth/register", { method: "POST", body: JSON.stringify(body) }),
   login: (body: { email: string; password: string }) =>
     request<{ user: User; token: string }>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
+  passwordResetStatus: () => request<PasswordResetStatus>("/api/auth/password-reset-status"),
   forgotPassword: (body: { identifier: string }) =>
     request<{
       message: string;
@@ -99,9 +101,9 @@ export const api = {
   deleteAccount: (body: { password: string; confirm: "DELETE" }) =>
     request<void>("/api/auth/account", { method: "DELETE", body: JSON.stringify(body) }),
   companions: () => request<{ companions: Companion[] }>("/api/companions"),
-  createCompanion: (body: { name: string; description: string; style: string }) =>
+  createCompanion: (body: { name: string; description: string; style: string; appearance?: Companion["appearance"] }) =>
     request<{ companion: Companion }>("/api/companions", { method: "POST", body: JSON.stringify(body) }),
-  updateCompanion: (id: string, body: { name: string; description: string; style: string }) =>
+  updateCompanion: (id: string, body: { name: string; description: string; style: string; appearance?: Companion["appearance"] }) =>
     request<{ companion: Companion }>(`/api/companions/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   defaultCompanion: (id: string) => request<{ companion: Companion }>(`/api/companions/${id}/default`, { method: "POST" }),
   deleteCompanion: (id: string) => request<void>(`/api/companions/${id}`, { method: "DELETE" }),
@@ -118,11 +120,36 @@ export const api = {
     attachment?: { name: string; mimeType: string; data: string };
     replyLanguage?: string;
     mode?: string;
+    regenerateOfMessageId?: string;
   }) =>
-    request<{ conversation: Conversation; userMessage: ChatMessage; assistantMessage: ChatMessage }>(
-      "/api/chat/message",
+    request<{
+      conversation: Conversation;
+      userMessage: ChatMessage;
+      assistantMessage: ChatMessage;
+      replacedMessageId?: string;
+    }>("/api/chat/message", { method: "POST", body: JSON.stringify(body) }),
+  favorites: () =>
+    request<{
+      favorites: { id: string; messageId: string; conversationId: string; content: string; createdAt: string }[];
+    }>("/api/favorites"),
+  addFavorite: (body: { messageId: string; conversationId: string; content: string }) =>
+    request<{ favorite: { id: string; messageId: string; conversationId: string; content: string; createdAt: string } }>(
+      "/api/favorites",
       { method: "POST", body: JSON.stringify(body) },
     ),
+  removeFavorite: (messageId: string) => request<void>(`/api/favorites/${messageId}`, { method: "DELETE" }),
+  studyGoal: () =>
+    request<{
+      goal: { topic: string; minutesPerDay: number; minutesDone: number; day: string; remaining: number };
+    }>("/api/study-goal"),
+  saveStudyGoal: (body: { topic: string; minutesPerDay: number; minutesDone?: number }) =>
+    request<{
+      goal: { topic: string; minutesPerDay: number; minutesDone: number; day: string; remaining: number };
+    }>("/api/study-goal", { method: "PUT", body: JSON.stringify(body) }),
+  addStudyProgress: (minutes: number) =>
+    request<{
+      goal: { topic: string; minutesPerDay: number; minutesDone: number; day: string; remaining: number };
+    }>("/api/study-goal/progress", { method: "POST", body: JSON.stringify({ minutes }) }),
   studioGenerate: (body: {
     mode: string;
     prompt: string;
@@ -132,6 +159,10 @@ export const api = {
     assignmentType?: "essay" | "assignment" | "report" | "outline" | "short-answer" | "detailed-answer";
     wordCount?: number;
     writingStyle?: "simple" | "academic";
+    studyFormat?: "explain" | "quiz" | "mcq" | "summary" | "study-plan";
+    documentType?: "notes" | "summary" | "report" | "study-guide" | "qa";
+    audience?: "school" | "university" | "professional";
+    presentationStyle?: "minimal" | "academic" | "bold";
     slideCount?: number;
     includeSpeakerNotes?: boolean;
     companionId?: string;

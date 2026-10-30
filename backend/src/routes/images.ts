@@ -5,7 +5,7 @@ import { requireUser } from "../middleware/auth.js";
 import { imageLimiter } from "../middleware/limits.js";
 import { validateBody } from "../middleware/validate.js";
 import { createDiagramReply, createEditedImageReply, createGeneratedImageReply } from "../services/imageChat.js";
-import { consumeUsage } from "../services/usage.js";
+import { withUsage } from "../services/usage.js";
 
 export const imageRouter = Router();
 imageRouter.use(requireUser);
@@ -15,15 +15,16 @@ imageRouter.post(
   imageLimiter,
   validateBody(imageGenerateSchema),
   asyncHandler(async (req, res) => {
-    const usage = await consumeUsage(req.user!.id, "image");
-    const result = await createGeneratedImageReply({
-      userId: req.user!.id,
-      conversationId: req.body.conversationId,
-      companionId: req.body.companionId,
-      prompt: req.body.prompt,
-      style: req.body.style,
-      purpose: req.body.purpose,
-    });
+    const { result, usage } = await withUsage(req.user!.id, "image", () =>
+      createGeneratedImageReply({
+        userId: req.user!.id,
+        conversationId: req.body.conversationId,
+        companionId: req.body.companionId,
+        prompt: req.body.prompt,
+        style: req.body.style,
+        purpose: req.body.purpose,
+      }),
+    );
     res.json({ ...result, usage });
   }),
 );
@@ -33,14 +34,15 @@ imageRouter.post(
   imageLimiter,
   validateBody(imageEditSchema),
   asyncHandler(async (req, res) => {
-    const usage = await consumeUsage(req.user!.id, "image");
-    const result = await createEditedImageReply({
-      userId: req.user!.id,
-      conversationId: req.body.conversationId,
-      companionId: req.body.companionId,
-      prompt: req.body.prompt,
-      image: req.body.image,
-    });
+    const { result, usage } = await withUsage(req.user!.id, "image", () =>
+      createEditedImageReply({
+        userId: req.user!.id,
+        conversationId: req.body.conversationId,
+        companionId: req.body.companionId,
+        prompt: req.body.prompt,
+        image: req.body.image,
+      }),
+    );
     res.json({ ...result, usage });
   }),
 );
@@ -50,14 +52,15 @@ imageRouter.post(
   imageLimiter,
   validateBody(imageDiagramSchema),
   asyncHandler(async (req, res) => {
-    const usage = await consumeUsage(req.user!.id, "diagram");
-    const result = await createDiagramReply({
-      userId: req.user!.id,
-      conversationId: req.body.conversationId,
-      companionId: req.body.companionId,
-      prompt: req.body.prompt,
-      kind: req.body.kind,
-    });
+    const { result, usage } = await withUsage(req.user!.id, "diagram", () =>
+      createDiagramReply({
+        userId: req.user!.id,
+        conversationId: req.body.conversationId,
+        companionId: req.body.companionId,
+        prompt: req.body.prompt,
+        kind: req.body.kind,
+      }),
+    );
     res.json({ ...result, usage });
   }),
 );

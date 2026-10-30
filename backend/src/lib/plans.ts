@@ -20,7 +20,7 @@ export type PlanDefinition = {
   annualPricePkr: number | null;
   limits: PlanLimits;
   features: string[];
-  /** Features advertised as Premium-only (still enforced by limits + flags). */
+  /** Marketing flag for Pricing UI. Access is enforced by daily limits, not this boolean. */
   premiumOnly: boolean;
 };
 
@@ -63,12 +63,13 @@ export function getPlans(): Record<PlanId, PlanDefinition> {
       },
       features: [
         "Everything in Free",
-        "Higher daily AI and Studio limits",
-        "Assignment and PPT workflows",
-        "DOCX / PDF / PPTX downloads",
-        "AI image generation when Gemini image quota is available",
+        "Higher daily chat, Studio, image, and diagram limits",
+        "Same Studio tools (assignments, PPT, docs, images) with more headroom",
+        "More DOCX / PDF / PPTX export capacity within daily Studio limits",
+        "More AI image generations when Gemini image quota is available",
         "Priority rate room within server limits",
       ],
+      /** Marketing label only — Studio/image access is enforced by daily limits, not a hard paywall. */
       premiumOnly: true,
     },
   };

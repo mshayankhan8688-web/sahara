@@ -1,14 +1,52 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { api, ApiError, setAuthToken } from "@/lib/api";
-import type { Companion, Preferences } from "@/lib/types";
+import type { Companion, CompanionAppearance, Preferences } from "@/lib/types";
 import { useAuth } from "@/context/AuthContext";
 import { useTheme } from "@/context/ThemeContext";
+import { CompanionAvatar } from "@/components/CompanionAvatar";
 import { ReplyLanguageSelect } from "@/components/ReplyLanguageSelect";
 import { Alert, Button, Field, PageHeader, TextArea, TextInput } from "@/components/ui";
+import {
+  APPEARANCE_PRESETS,
+  companionAppearanceOf,
+  notifyCompanionsChanged,
+  writeStoredCompanionId,
+} from "@/lib/companions";
 import { readReplyLanguage, writeReplyLanguage, type ReplyLanguage } from "@/lib/replyLanguage";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+
+/** Colored initial avatars for the user profile (PNG — not the AI companion). */
+const PROFILE_AVATAR_PRESETS: { id: string; label: string; bg: string; fg: string }[] = [
+  { id: "lavender", label: "Lavender", bg: "#7c6cf0", fg: "#ffffff" },
+  { id: "peach", label: "Peach", bg: "#e89a7a", fg: "#2a1f1a" },
+  { id: "rose", label: "Rose", bg: "#d46b9a", fg: "#ffffff" },
+  { id: "mint", label: "Mint", bg: "#4aa88a", fg: "#ffffff" },
+  { id: "slate", label: "Slate", bg: "#5b6478", fg: "#ffffff" },
+];
+
+function profilePresetAvatar(letter: string, bg: string, fg: string): { mimeType: string; data: string } {
+  const safe = (letter.trim().slice(0, 1) || "S").toUpperCase();
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not create avatar preview.");
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.arc(128, 128, 128, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = fg;
+  ctx.font = "700 110px Georgia, serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(safe, 128, 138);
+  const dataUrl = canvas.toDataURL("image/png");
+  const data = dataUrl.includes(",") ? dataUrl.split(",")[1] ?? "" : "";
+  if (!data) throw new Error("Could not create avatar preview.");
+  return { mimeType: "image/png", data };
+}
 
 function list(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -114,7 +152,48 @@ const companionSchema = z.object({
   name: z.string().trim().min(2).max(40),
   description: z.string().trim().max(400),
   style: z.string().trim().min(10).max(800),
+  appearance: z.enum(["female", "male", "neutral"]),
 });
+
+/** Style presets change how the AI speaks — not a second companion. */
+const STYLE_PRESETS = [
+  {
+    id: "friendly",
+    label: "Friendly",
+    style:
+      "Friendly and chatty AI companion. Match the user's language. Keep replies warm, natural, and short. Light emoji only when it fits. Ask one follow-up. You are AI, not a person.",
+  },
+  {
+    id: "calm",
+    label: "Calm",
+    style:
+      "Calm, steady AI companion. Soft tone, no rush. Acknowledge feelings, keep sentences simple, avoid hype. Rare emoji. You are AI, not a therapist.",
+  },
+  {
+    id: "motivational",
+    label: "Motivational",
+    style:
+      "Encouraging AI companion. Notice effort, suggest one small next step, stay realistic. Match language. Light emoji only when it fits. Not a coach who shouts slogans.",
+  },
+  {
+    id: "emotional",
+    label: "Emotional Support",
+    style:
+      "Supportive AI companion for loneliness, overthinking, and hard days. Validate first, listen more than advise, one gentle question. Soft emoji only when appropriate; never joke about serious distress. You are AI, not a clinician.",
+  },
+  {
+    id: "study",
+    label: "Study Companion",
+    style:
+      "Patient study buddy AI. Clear explanations, short steps, check understanding with one question. Prefer plain language over emoji. Encourage honest learning; no fake citations.",
+  },
+] as const;
+
+const appearanceLabel: Record<CompanionAppearance, string> = {
+  female: "Female AI Companion",
+  male: "Male AI Companion",
+  neutral: "Neutral AI Companion",
+};
 
 export function CompanionPage() {
   useDocumentTitle("Companion");
@@ -122,8 +201,11 @@ export function CompanionPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [style, setStyle] = useState("");
+  const [appearance, setAppearance] = useState<CompanionAppearance>("female");
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [applying, setApplying] = useState<CompanionAppearance | null>(null);
 
   const load = () => {
     api.companions().then((result) => setItems(result.companions)).catch((loadError) => {
@@ -135,9 +217,53 @@ export function CompanionPage() {
     load();
   }, []);
 
+  const selected = items.find((item) => item.isDefault) ?? items[0] ?? null;
+
+  const selectAppearance = async (preset: (typeof APPEARANCE_PRESETS)[number]) => {
+    setApplying(preset.appearance);
+    setError("");
+    setNotice("");
+    try {
+      const match =
+        items.find((item) => companionAppearanceOf(item) === preset.appearance) ??
+        items.find((item) => item.name.trim().toLowerCase() === preset.name.toLowerCase());
+      let companion: Companion;
+      if (match) {
+        const updated = await api.updateCompanion(match.id, {
+          name: preset.name,
+          description: preset.description,
+          style: preset.style,
+          appearance: preset.appearance,
+        });
+        companion = updated.companion;
+      } else {
+        const created = await api.createCompanion({
+          name: preset.name,
+          description: preset.description,
+          style: preset.style,
+          appearance: preset.appearance,
+        });
+        companion = created.companion;
+      }
+      if (!companion.isDefault) {
+        const madeDefault = await api.defaultCompanion(companion.id);
+        companion = madeDefault.companion;
+      }
+      writeStoredCompanionId(companion.id);
+      notifyCompanionsChanged();
+      setNotice(`${companion.name} is now your companion.`);
+      load();
+    } catch (selectError) {
+      console.error("Failed to select companion appearance", selectError);
+      setError(selectError instanceof ApiError ? selectError.message : "Could not update companion appearance.");
+    } finally {
+      setApplying(null);
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const parsed = companionSchema.safeParse({ name, description, style });
+    const parsed = companionSchema.safeParse({ name, description, style, appearance });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Check the companion.");
       return;
@@ -148,8 +274,11 @@ export function CompanionPage() {
       setName("");
       setDescription("");
       setStyle("");
+      setAppearance("female");
       setEditing(null);
       setError("");
+      setNotice("Companion saved.");
+      notifyCompanionsChanged();
       load();
     } catch (saveError) {
       console.error("Failed to save companion", saveError);
@@ -159,27 +288,146 @@ export function CompanionPage() {
 
   return (
     <div className="h-full overflow-auto px-4 py-6 sm:px-8">
-      <PageHeader eyebrow="Voice" title="Companion" body="Safety rules stay in place. A companion can change tone, not pretend to be human or a clinician." />
-      {error ? <div className="mb-4 max-w-xl"><Alert>{error}</Alert></div> : null}
-      <ul className="mb-8 max-w-xl space-y-3">
+      <PageHeader
+        eyebrow="Personalize"
+        title="Companion"
+        body="Choose an AI companion appearance. This is not your gender — pick whoever you prefer. Safety rules stay in place; companions never pretend to be human or clinicians."
+      />
+      {error ? <div className="mb-4 max-w-3xl"><Alert>{error}</Alert></div> : null}
+      {notice ? <p className="mb-4 text-sm text-leaf">{notice}</p> : null}
+
+      {selected ? (
+        <div className="mb-8 flex max-w-3xl flex-wrap items-center gap-4 rounded-3xl border border-line bg-elevated/80 p-4">
+          <CompanionAvatar appearance={companionAppearanceOf(selected)} name={selected.name} className="h-20 w-20" />
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-soft">Selected preview</p>
+            <h2 className="font-serif text-3xl leading-none">{selected.name}</h2>
+            <p className="mt-1 text-sm text-soft">{appearanceLabel[companionAppearanceOf(selected)]}</p>
+          </div>
+        </div>
+      ) : null}
+
+      <section className="mb-10 max-w-3xl" aria-label="Companion appearance">
+        <h2 className="font-serif text-2xl">Appearance</h2>
+        <p className="mt-1 text-sm text-soft">Saved to your account and used across New Chat and the chat header.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {APPEARANCE_PRESETS.map((preset) => {
+            const active = selected ? companionAppearanceOf(selected) === preset.appearance : false;
+            return (
+              <button
+                key={preset.appearance}
+                type="button"
+                className="companion-pick-card"
+                data-selected={active ? "true" : "false"}
+                aria-pressed={active}
+                disabled={applying !== null}
+                onClick={() => void selectAppearance(preset)}
+              >
+                <CompanionAvatar appearance={preset.appearance} name={preset.name} className="mx-auto h-20 w-20" />
+                <p className="mt-3 font-serif text-2xl leading-none">{preset.name}</p>
+                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-lavender">{appearanceLabel[preset.appearance]}</p>
+                <p className="mt-2 text-xs leading-5 text-soft">{preset.description}</p>
+                <span className="mt-3 inline-flex text-xs font-semibold text-accent">
+                  {applying === preset.appearance ? "Saving…" : active ? "Selected" : "Select"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <ul className="mb-8 max-w-3xl space-y-3">
         {items.map((item) => (
           <li key={item.id} className="rounded-3xl border border-line p-4">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="font-serif text-3xl">{item.name}</h2>
-              {item.isDefault ? <span className="text-xs uppercase tracking-[0.14em] text-leaf">Default</span> : null}
-            </div>
-            <p className="mt-2 text-sm leading-6 text-soft">{item.description}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button variant="ghost" type="button" onClick={() => { setEditing(item.id); setName(item.name); setDescription(item.description); setStyle(item.style); }}>Edit</Button>
-              {!item.isDefault ? <Button variant="ghost" type="button" onClick={() => void api.defaultCompanion(item.id).then(load)}>Make default</Button> : null}
-              <Button variant="danger" type="button" onClick={() => void api.deleteCompanion(item.id).then(load).catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : "Could not delete."))}>Delete</Button>
+            <div className="flex items-start gap-3">
+              <CompanionAvatar appearance={companionAppearanceOf(item)} name={item.name} className="h-14 w-14" />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-serif text-2xl">{item.name}</h3>
+                  {item.isDefault ? <span className="text-xs uppercase tracking-[0.14em] text-leaf">Default</span> : null}
+                </div>
+                <p className="mt-1 text-xs text-soft">{appearanceLabel[companionAppearanceOf(item)]}</p>
+                <p className="mt-2 text-sm leading-6 text-soft">{item.description}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={() => {
+                      setEditing(item.id);
+                      setName(item.name);
+                      setDescription(item.description);
+                      setStyle(item.style);
+                      setAppearance(companionAppearanceOf(item));
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  {!item.isDefault ? (
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      onClick={() =>
+                        void api.defaultCompanion(item.id).then((result) => {
+                          writeStoredCompanionId(result.companion.id);
+                          notifyCompanionsChanged();
+                          load();
+                        })
+                      }
+                    >
+                      Make default
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="danger"
+                    type="button"
+                    onClick={() =>
+                      void api
+                        .deleteCompanion(item.id)
+                        .then(() => {
+                          notifyCompanionsChanged();
+                          load();
+                        })
+                        .catch((deleteError) => setError(deleteError instanceof Error ? deleteError.message : "Could not delete."))
+                    }
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </div>
             </div>
           </li>
         ))}
       </ul>
+
       <form onSubmit={(event) => void submit(event)} className="max-w-xl space-y-4">
         <Field label="Name"><TextInput value={name} onChange={(event) => setName(event.target.value)} /></Field>
         <Field label="Description"><TextInput value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
+        <Field label="Appearance">
+          <select
+            className="w-full rounded-2xl border border-line bg-muted px-3 py-2.5 text-sm"
+            value={appearance}
+            onChange={(event) => setAppearance(event.target.value as CompanionAppearance)}
+            aria-label="Companion appearance"
+          >
+            <option value="female">Female</option>
+            <option value="male">Male</option>
+            <option value="neutral">Neutral</option>
+          </select>
+        </Field>
+        <Field label="Response style presets" hint="Fills the speaking style below. Edit further if you want.">
+          <div className="flex flex-wrap gap-2">
+            {STYLE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="rounded-full border border-line bg-muted px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-accent hover:bg-accent-soft"
+                onClick={() => setStyle(preset.style)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </Field>
         <Field label="How they speak"><TextArea rows={5} value={style} onChange={(event) => setStyle(event.target.value)} /></Field>
         <Button type="submit">{editing ? "Save companion" : "Create companion"}</Button>
       </form>
@@ -208,11 +456,11 @@ export function ProfilePage() {
     if (!file) return;
     const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     if (!allowed.includes(file.type)) {
-      setError("JPEG, PNG, WebP, ya GIF photo use karein.");
+      setError("Use a JPEG, PNG, WebP, or GIF photo.");
       return;
     }
     if (file.size > 1024 * 1024) {
-      setError("Photo 1 MB se choti rakhein.");
+      setError("Keep the photo under 1 MB.");
       return;
     }
     const buffer = await file.arrayBuffer();
@@ -253,7 +501,11 @@ export function ProfilePage() {
 
   return (
     <div className="h-full overflow-auto px-4 py-6 sm:px-8">
-      <PageHeader eyebrow="Account" title="Profile" body={`Member since ${new Date(user.createdAt).toLocaleDateString()}.`} />
+      <PageHeader
+        eyebrow="Account"
+        title="Your profile"
+        body={`This is your user photo and account details — separate from the AI companion avatar. Member since ${new Date(user.createdAt).toLocaleDateString()}.`}
+      />
       <form onSubmit={(event) => void save(event)} className="max-w-md space-y-4">
         {error ? <Alert>{error}</Alert> : null}
         {message ? <Alert>{message}</Alert> : null}
@@ -262,7 +514,9 @@ export function ProfilePage() {
             {previewSrc ? <img src={previewSrc} alt="" className="h-full w-full object-cover" /> : initials}
           </div>
           <div className="min-w-0 space-y-2">
-            <p className="text-sm text-soft">Apni profile pic yahan lagayein. Har account ki apni photo save hoti hai.</p>
+            <p className="text-sm text-soft">
+              Upload, change, or remove your profile picture. This never changes Safa or your AI companion appearance.
+            </p>
             <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-line px-3 py-2 text-xs font-semibold transition hover:bg-muted">
               Choose photo
               <input
@@ -289,6 +543,35 @@ export function ProfilePage() {
                 Remove photo
               </button>
             ) : null}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-soft">Or pick a simple avatar</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {PROFILE_AVATAR_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="grid h-12 w-12 place-items-center rounded-full border border-line text-sm font-semibold transition hover:scale-105"
+                style={{ background: preset.bg, color: preset.fg }}
+                title={preset.label}
+                aria-label={`Use ${preset.label} avatar`}
+                onClick={() => {
+                  try {
+                    setAvatar(profilePresetAvatar(name || user.name || "S", preset.bg, preset.fg));
+                    setAvatarDirty(true);
+                    setClearAvatar(false);
+                    setMessage("");
+                    setError("");
+                  } catch (presetError) {
+                    console.error(presetError);
+                    setError(presetError instanceof Error ? presetError.message : "Could not apply that avatar.");
+                  }
+                }}
+              >
+                {(name || user.name || "S").slice(0, 1).toUpperCase()}
+              </button>
+            ))}
           </div>
         </div>
         <Field label="Name"><TextInput value={name} onChange={(event) => setName(event.target.value)} /></Field>
@@ -327,6 +610,18 @@ export function SettingsPage() {
     <div className="h-full overflow-auto px-4 py-6 sm:px-8">
       <PageHeader eyebrow="Control" title="Settings" body="Theme, the live service status, and account removal." />
       <section className="max-w-xl">
+        <h2 className="font-serif text-3xl">Customize</h2>
+        <p className="mt-2 text-sm leading-6 text-soft">Your profile photo and the AI companion are separate settings.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link to="/app/profile" className="rounded-full border border-line px-4 py-2 text-sm font-semibold transition hover:bg-muted">
+            Profile &amp; photo
+          </Link>
+          <Link to="/app/companion" className="rounded-full border border-line px-4 py-2 text-sm font-semibold transition hover:bg-muted">
+            AI companion
+          </Link>
+        </div>
+      </section>
+      <section className="mt-8 max-w-xl">
         <h2 className="font-serif text-3xl">Reply language</h2>
         <p className="mt-2 text-sm leading-6 text-soft">Auto detect follows each message. A chosen language is used until you change it, unless you ask for a different language in the message.</p>
         <div className="mt-3">

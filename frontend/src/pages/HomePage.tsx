@@ -1,16 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BookOpen, Briefcase, CalendarDays, GraduationCap, Mic, Paperclip, Send, Utensils } from "lucide-react";
+import { BookOpen, Briefcase, CalendarDays, GraduationCap, Mic, Paperclip, Send, Star, Utensils } from "lucide-react";
 import { ReplyLanguageSelect } from "@/components/ReplyLanguageSelect";
 import { SaharaOrb } from "@/components/SaharaOrb";
 import { Alert, AiMark, Button } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
 import { readReplyLanguage, writeReplyLanguage, type ReplyLanguage } from "@/lib/replyLanguage";
-import type { Companion, Conversation } from "@/lib/types";
+import type { Companion, Conversation, FavoriteReply } from "@/lib/types";
 import { useAuth } from "@/context/AuthContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
-const COMPANION_KEY = "sahara.companionId";
+import { readStoredCompanionId, writeStoredCompanionId } from "@/lib/companions";
+
+const DAILY_TIPS = [
+  "Review one hard topic for 20 focused minutes — small sessions beat all-nighters.",
+  "Write your next assignment outline before you draft. Structure first saves rewriting later.",
+  "If you feel stuck, ask SAHARA to explain the idea in simple English or Roman Urdu.",
+  "Save useful AI replies with the star in chat so you can find them again on Home.",
+  "Drink water and stretch for two minutes between study blocks.",
+  "Turn one lecture into five practice questions — then check your answers.",
+  "Your profile photo is yours. The AI companion avatar is separate — customize both when you want.",
+];
 
 const spotlight = [
   { to: "/app/studio?mode=study", title: "Study Studio", body: "Assignments, PPT, notes, exam prep, and explanations.", icon: GraduationCap },
@@ -37,9 +47,23 @@ export function HomePage() {
   const [draft, setDraft] = useState("");
   const [language, setLanguage] = useState<ReplyLanguage>(() => readReplyLanguage());
   const [companions, setCompanions] = useState<Companion[]>([]);
-  const [companionId, setCompanionId] = useState(() => localStorage.getItem(COMPANION_KEY) ?? "");
+  const [companionId, setCompanionId] = useState(() => readStoredCompanionId());
   const [chats, setChats] = useState<Conversation[] | null>(null);
   const [chatError, setChatError] = useState("");
+  const [favorites, setFavorites] = useState<FavoriteReply[]>([]);
+  const [studyGoal, setStudyGoal] = useState<{
+    topic: string;
+    minutesPerDay: number;
+    minutesDone: number;
+    remaining: number;
+  } | null>(null);
+  const [goalTopic, setGoalTopic] = useState("");
+  const [goalMinutes, setGoalMinutes] = useState(30);
+  const [goalBusy, setGoalBusy] = useState(false);
+  const dailyTip = useMemo(() => {
+    const day = Math.floor(Date.now() / 86_400_000);
+    return DAILY_TIPS[day % DAILY_TIPS.length] ?? DAILY_TIPS[0];
+  }, []);
 
   useEffect(() => {
     api
@@ -50,6 +74,22 @@ export function HomePage() {
         setChats([]);
         setChatError(loadError instanceof ApiError ? loadError.message : "Recent chats could not be loaded.");
       });
+    api
+      .favorites()
+      .then((result) => setFavorites(result.favorites.slice(0, 4)))
+      .catch((loadError) => {
+        console.error("Failed to load favorites", loadError);
+      });
+    api
+      .studyGoal()
+      .then((result) => {
+        setStudyGoal(result.goal);
+        setGoalTopic(result.goal.topic);
+        setGoalMinutes(result.goal.minutesPerDay);
+      })
+      .catch((loadError) => {
+        console.error("Failed to load study goal", loadError);
+      });
   }, []);
 
   useEffect(() => {
@@ -57,12 +97,12 @@ export function HomePage() {
       .companions()
       .then((result) => {
         setCompanions(result.companions);
-        const saved = localStorage.getItem(COMPANION_KEY);
+        const saved = readStoredCompanionId();
         const match = result.companions.find((item) => item.id === saved);
         const fallback = match ?? result.companions.find((item) => item.isDefault) ?? result.companions[0];
         if (fallback) {
           setCompanionId(fallback.id);
-          localStorage.setItem(COMPANION_KEY, fallback.id);
+          writeStoredCompanionId(fallback.id);
         }
       })
       .catch((loadError) => {
@@ -72,7 +112,7 @@ export function HomePage() {
 
   const openChat = (prompt: string) => {
     const text = prompt.trim();
-    if (companionId) localStorage.setItem(COMPANION_KEY, companionId);
+    if (companionId) writeStoredCompanionId(companionId);
     navigate(text ? `/app/chat?prompt=${encodeURIComponent(text)}` : "/app/chat");
   };
 
@@ -111,7 +151,7 @@ export function HomePage() {
                       aria-label="Companion"
                       onChange={(event) => {
                         setCompanionId(event.target.value);
-                        localStorage.setItem(COMPANION_KEY, event.target.value);
+                        writeStoredCompanionId(event.target.value);
                       }}
                     >
                       {companions.map((companion) => (
@@ -168,6 +208,80 @@ export function HomePage() {
             </div>
           </form>
           <p className="mt-3 text-xs leading-5 text-soft">This opens chat and waits. Nothing is sent to Gemini until you press send there.</p>
+        </section>
+
+        <section className="mt-8 grid gap-4 lg:grid-cols-2">
+          <div className="panel p-5">
+            <h2 className="font-serif text-2xl">Today&apos;s tip</h2>
+            <p className="mt-2 text-sm leading-6 text-soft">{dailyTip}</p>
+          </div>
+          <div className="panel p-5">
+            <h2 className="font-serif text-2xl">Daily study goal</h2>
+            <p className="mt-2 text-sm leading-6 text-soft">
+              {studyGoal
+                ? `${studyGoal.minutesDone} / ${studyGoal.minutesPerDay} minutes${studyGoal.topic ? ` · ${studyGoal.topic}` : ""}`
+                : "Set a small daily target so you come back tomorrow."}
+            </p>
+            {studyGoal ? (
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-accent transition-[width]"
+                  style={{ width: `${Math.min(100, (studyGoal.minutesDone / Math.max(1, studyGoal.minutesPerDay)) * 100)}%` }}
+                />
+              </div>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <input
+                className="min-w-[10rem] flex-1 rounded-full border border-line bg-muted px-3 py-2 text-sm text-ink"
+                placeholder="Topic (optional)"
+                value={goalTopic}
+                onChange={(event) => setGoalTopic(event.target.value)}
+              />
+              <select
+                className="rounded-full border border-line bg-muted px-3 py-2 text-sm text-ink"
+                value={goalMinutes}
+                onChange={(event) => setGoalMinutes(Number(event.target.value))}
+                aria-label="Minutes per day"
+              >
+                {[15, 30, 45, 60, 90, 120].map((value) => (
+                  <option key={value} value={value}>
+                    {value} min
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-10 px-3 text-xs"
+                disabled={goalBusy}
+                onClick={() => {
+                  setGoalBusy(true);
+                  void api
+                    .saveStudyGoal({ topic: goalTopic.trim(), minutesPerDay: goalMinutes })
+                    .then((result) => setStudyGoal(result.goal))
+                    .catch((saveError) => console.error(saveError))
+                    .finally(() => setGoalBusy(false));
+                }}
+              >
+                Save goal
+              </Button>
+              <Button
+                type="button"
+                className="min-h-10 px-3 text-xs"
+                disabled={goalBusy || !studyGoal}
+                onClick={() => {
+                  setGoalBusy(true);
+                  void api
+                    .addStudyProgress(15)
+                    .then((result) => setStudyGoal(result.goal))
+                    .catch((progressError) => console.error(progressError))
+                    .finally(() => setGoalBusy(false));
+                }}
+              >
+                +15 min
+              </Button>
+            </div>
+          </div>
         </section>
 
         <section className="mt-8">
@@ -245,19 +359,48 @@ export function HomePage() {
             ) : null}
           </section>
           <section className="panel p-5">
-            <h2 className="font-serif text-2xl">Make it yours</h2>
-            <p className="mt-2 text-sm leading-6 text-soft">The reply language is saved on this device and used in chat, study, and food ideas.</p>
-            <Link to="/app/feedback" className="mt-3 inline-flex text-sm font-semibold text-accent">
-              Send feedback
-            </Link>
-            <div className="mt-4">
-              <ReplyLanguageSelect
-                value={language}
-                onChange={(next) => {
-                  setLanguage(next);
-                  writeReplyLanguage(next);
-                }}
-              />
+            <h2 className="font-serif text-2xl">Saved replies</h2>
+            <p className="mt-2 text-sm leading-6 text-soft">Star an AI reply in chat to keep it here.</p>
+            {favorites.length === 0 ? (
+              <p className="mt-4 text-sm text-soft">No saved replies yet.</p>
+            ) : (
+              <ul className="mt-4 space-y-3">
+                {favorites.map((item) => (
+                  <li key={item.id}>
+                    <Link to={`/app/chat/${item.conversationId}`} className="block rounded-2xl border border-line p-3 transition hover:border-accent">
+                      <span className="mb-1 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-accent">
+                        <Star className="h-3 w-3 fill-accent" />
+                        Favorite
+                      </span>
+                      <p className="line-clamp-3 text-sm leading-6 text-soft">{item.content}</p>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-5 border-t border-line pt-4">
+              <h3 className="font-serif text-xl">Make it yours</h3>
+              <p className="mt-2 text-sm leading-6 text-soft">Reply language stays on this device. Profile photo and AI companion are separate.</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <Link to="/app/profile" className="text-sm font-semibold text-accent">
+                  Profile
+                </Link>
+                <Link to="/app/companion" className="text-sm font-semibold text-accent">
+                  Companion
+                </Link>
+                <Link to="/app/feedback" className="text-sm font-semibold text-accent">
+                  Feedback
+                </Link>
+              </div>
+              <div className="mt-4">
+                <ReplyLanguageSelect
+                  value={language}
+                  onChange={(next) => {
+                    setLanguage(next);
+                    writeReplyLanguage(next);
+                  }}
+                />
+              </div>
             </div>
           </section>
         </div>

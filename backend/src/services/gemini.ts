@@ -217,7 +217,7 @@ export async function composeReply(input: {
       ],
     },
   ];
-  const temperature = mode === "emotion" ? 0.75 : mode === "assignment" || mode === "ppt" || mode === "document" ? 0.45 : 0.65;
+  const temperature = mode === "emotion" ? 0.85 : mode === "assignment" || mode === "ppt" || mode === "document" ? 0.45 : 0.7;
   return generate(
     contents,
     {

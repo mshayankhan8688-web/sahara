@@ -67,10 +67,13 @@ export const locationSchema = z
     message: "Precise location needs coordinates.",
   });
 
+export const companionAppearanceSchema = z.enum(["female", "male", "neutral"]);
+
 export const companionSchema = z.object({
   name: z.string().trim().min(2).max(40),
   description: z.string().trim().max(400).default(""),
   style: z.string().trim().min(10, "Describe how they should speak.").max(800),
+  appearance: companionAppearanceSchema.default("female"),
 });
 
 export const chatSchema = z
@@ -95,11 +98,19 @@ export const chatSchema = z
       .optional(),
     replyLanguage: z.enum(replyLanguages).default("auto"),
     mode: z.enum(chatModes).optional(),
+    /** When set, replace that assistant message instead of appending a new user+assistant turn. */
+    regenerateOfMessageId: z.string().trim().optional(),
   })
   .refine((value) => value.content.length > 0 || Boolean(value.attachment), {
     message: "Write a message or attach a file.",
     path: ["content"],
   });
+
+export const favoriteSchema = z.object({
+  messageId: z.string().trim().min(1),
+  conversationId: z.string().trim().min(1),
+  content: z.string().trim().min(1).max(4000),
+});
 
 export const conversationTitleSchema = z.object({
   title: z.string().trim().min(1, "Enter a title.").max(80, "Keep the title under 80 characters."),
@@ -116,6 +127,10 @@ export const studioGenerateSchema = z.object({
     .optional(),
   wordCount: z.number().int().min(50).max(5000).optional(),
   writingStyle: z.enum(["simple", "academic"]).optional(),
+  studyFormat: z.enum(["explain", "quiz", "mcq", "summary", "study-plan"]).optional(),
+  documentType: z.enum(["notes", "summary", "report", "study-guide", "qa"]).optional(),
+  audience: z.enum(["school", "university", "professional"]).optional(),
+  presentationStyle: z.enum(["minimal", "academic", "bold"]).optional(),
   slideCount: z.number().int().min(4).max(20).optional(),
   includeSpeakerNotes: z.boolean().optional(),
   companionId: z.string().trim().optional(),
@@ -127,6 +142,16 @@ export const studioGenerateSchema = z.object({
       data: z.string().trim().min(1).max(4_200_000),
     })
     .optional(),
+});
+
+export const studyGoalSchema = z.object({
+  topic: z.string().trim().max(120).default(""),
+  minutesPerDay: z.number().int().min(5).max(480),
+  minutesDone: z.number().int().min(0).max(480).optional(),
+});
+
+export const studyGoalProgressSchema = z.object({
+  minutes: z.number().int().min(1).max(240),
 });
 
 export const studioExportSchema = z.object({

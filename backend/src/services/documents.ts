@@ -277,7 +277,7 @@ export async function buildDocx(title: string, content: string): Promise<Buffer>
 
 export async function buildPdf(title: string, content: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 56, info: { Title: title, Author: "SAHARA" } });
+    const doc = new PDFDocument({ margin: 56, bufferPages: true, info: { Title: title, Author: "SAHARA" } });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));

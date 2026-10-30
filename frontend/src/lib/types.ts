@@ -48,11 +48,14 @@ export type BillingPlansResponse = {
   plans: BillingPlan[];
 };
 
+export type CompanionAppearance = "female" | "male" | "neutral";
+
 export type Companion = {
   id: string;
   name: string;
   description: string;
   style: string;
+  appearance: CompanionAppearance;
   isDefault: boolean;
 };
 
@@ -92,6 +95,14 @@ export type ChatMessage = {
   createdAt: string;
 };
 
+export type FavoriteReply = {
+  id: string;
+  messageId: string;
+  conversationId: string;
+  content: string;
+  createdAt: string;
+};
+
 export type JournalEntry = {
   id: string;
   content: string;
@@ -122,4 +133,17 @@ export type Health = {
   aiConfigured: boolean;
   placesConfigured?: boolean;
   paymentsConfigured?: boolean;
+  mailConfigured?: boolean;
+  smsConfigured?: boolean;
+  passwordResetLocalFallback?: boolean;
+};
+
+export type PasswordResetStatus = {
+  emailReady: boolean;
+  smsReady: boolean;
+  emailDeliveryConfigured: boolean;
+  smsDeliveryConfigured: boolean;
+  localDevFallback: boolean;
+  requiredEnv: { email: string[]; sms: string[] };
+  notice: string;
 };

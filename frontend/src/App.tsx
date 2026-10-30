@@ -71,6 +71,7 @@ const router = createBrowserRouter([
       { path: "chat/:conversationId?", element: <ChatPage /> },
       { path: "conversations", element: <ConversationsPage /> },
       { path: "food", element: <FoodPage /> },
+      // Restaurant finder UI removed on purpose; /api/restaurants remains for OSM/Places backends.
       { path: "restaurants", element: <Navigate to="/app" replace /> },
       { path: "studio", element: <StudioPage /> },
       {

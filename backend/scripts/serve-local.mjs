@@ -80,4 +80,6 @@ for (const [name, value] of Object.entries({ ...env, MONGODB_URI: uri, GEMINI_MO
   process.env[name] = value;
 }
 
+// Node cannot resolve TypeScript `.js` import specifiers without the tsx loader.
+// Prefer: `node --import tsx scripts/serve-local.mjs`
 await import("../src/index.ts");

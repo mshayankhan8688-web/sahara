@@ -7,6 +7,8 @@ import type { Express } from "express";
 let app: Express;
 let memory: { stop: () => Promise<boolean> };
 let consumeUsage: typeof import("../services/usage.js").consumeUsage;
+let withUsage: typeof import("../services/usage.js").withUsage;
+let getUsageSnapshot: typeof import("../services/usage.js").getUsageSnapshot;
 let usageDayKey: typeof import("../lib/plans.js").usageDayKey;
 let User: typeof import("../models/User.js").User;
 let Usage: typeof import("../models/Usage.js").Usage;
@@ -31,7 +33,7 @@ before(async () => {
   const configMod = await import("../config.js");
   freeChatDaily = configMod.config.freeChatDaily;
   freeImageDaily = configMod.config.freeImageDaily;
-  ({ consumeUsage } = await import("../services/usage.js"));
+  ({ consumeUsage, withUsage, getUsageSnapshot } = await import("../services/usage.js"));
   ({ usageDayKey } = await import("../lib/plans.js"));
   ({ User } = await import("../models/User.js"));
   ({ Usage } = await import("../models/Usage.js"));
@@ -112,4 +114,31 @@ test("usage meter enforces daily limits and respects premium grant", async () =>
   assert.equal(status.body.planId, "premium");
   assert.equal(status.body.canCheckout, false);
   assert.equal(status.body.paymentsConfigured, false);
+});
+
+test("withUsage refunds the reserved unit when work fails", async () => {
+  const registered = await request(app)
+    .post("/api/auth/register")
+    .set(header)
+    .send({ name: "Refund User", email: `refund-${Date.now()}@example.com`, password: "correct-horse" });
+  assert.equal(registered.status, 201);
+  const userId = registered.body.user.id as string;
+
+  const before = await getUsageSnapshot(userId);
+  const chatBefore = before.buckets.find((bucket) => bucket.kind === "chat")?.used ?? 0;
+
+  await assert.rejects(
+    () =>
+      withUsage(userId, "chat", async () => {
+        throw new Error("simulated AI failure");
+      }),
+    /simulated AI failure/,
+  );
+
+  const after = await getUsageSnapshot(userId);
+  assert.equal(after.buckets.find((bucket) => bucket.kind === "chat")?.used ?? -1, chatBefore);
+
+  const ok = await withUsage(userId, "chat", async () => ({ ok: true }));
+  assert.equal(ok.result.ok, true);
+  assert.equal(ok.usage.buckets.find((bucket) => bucket.kind === "chat")?.used ?? -1, chatBefore + 1);
 });

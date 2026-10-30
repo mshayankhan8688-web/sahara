@@ -7,7 +7,7 @@ import { requireUser } from "../middleware/auth.js";
 import { chatLimiter } from "../middleware/limits.js";
 import { validateBody } from "../middleware/validate.js";
 import { composeReply } from "../services/gemini.js";
-import { consumeUsage } from "../services/usage.js";
+import { withUsage } from "../services/usage.js";
 
 export const foodRouter = Router();
 
@@ -19,7 +19,6 @@ foodRouter.post(
   asyncHandler(async (req, res) => {
     const companion = await Companion.findOne({ userId: req.user!.id, isDefault: true });
     if (!companion) throw new HttpError(400, "Choose a companion first.", "NO_COMPANION");
-    const usage = await consumeUsage(req.user!.id, "chat");
     const doc = await Preference.findOne({ userId: req.user!.id }).lean();
     const preferences =
       doc && doc.personalizationEnabled
@@ -37,15 +36,17 @@ foodRouter.post(
             personalizationEnabled: true,
           }
         : null;
-    const content = await composeReply({
-      companionName: companion.name,
-      companionStyle: companion.style,
-      preferences,
-      history: [],
-      latest: req.body.note,
-      search: { status: "not_requested", results: [] },
-      replyLanguage: req.body.replyLanguage,
-    });
+    const { result: content, usage } = await withUsage(req.user!.id, "chat", () =>
+      composeReply({
+        companionName: companion.name,
+        companionStyle: companion.style,
+        preferences,
+        history: [],
+        latest: req.body.note,
+        search: { status: "not_requested", results: [] },
+        replyLanguage: req.body.replyLanguage,
+      }),
+    );
     res.json({
       content,
       saved: false,
