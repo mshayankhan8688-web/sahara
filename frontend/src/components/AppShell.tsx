@@ -79,8 +79,8 @@ export function AppShell() {
       ) : null}
       <div className={`border-t border-line p-4 ${compact ? "px-2" : ""}`}>
         {!compact ? (
-          <Link to="/app/profile" className="flex items-center gap-3 rounded-2xl p-1 transition hover:bg-muted" title="Your profile">
-            <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-line bg-muted text-sm font-semibold text-accent">
+          <Link to="/app/profile" className="profile-card-3d flex items-center gap-3 rounded-2xl p-2 transition" title="Your profile">
+            <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-line bg-muted text-sm font-semibold text-accent shadow-[var(--glow-pink)]">
               {user?.avatar?.data ? (
                 <img src={`data:${user.avatar.mimeType};base64,${user.avatar.data}`} alt="" className="h-full w-full object-cover" />
               ) : (
@@ -107,12 +107,12 @@ export function AppShell() {
           </Link>
         )}
         <div className={`mt-3 flex gap-2 ${compact ? "flex-col items-center" : ""}`}>
-          <button type="button" className="min-h-9 rounded-full border border-line px-3 py-1.5 text-xs transition hover:bg-muted" onClick={toggleTheme} title={theme === "dark" ? "Light" : "Dark"}>
+          <button type="button" className="ui-chip-3d min-h-9 rounded-full border border-line px-3 py-1.5 text-xs" onClick={toggleTheme} title={theme === "dark" ? "Light" : "Dark"}>
             {compact ? (theme === "dark" ? "L" : "D") : theme === "dark" ? "Light" : "Dark"}
           </button>
           <button
             type="button"
-            className="min-h-9 rounded-full border border-line px-3 py-1.5 text-xs transition hover:bg-muted"
+            className="ui-chip-3d min-h-9 rounded-full border border-line px-3 py-1.5 text-xs"
             title="Sign out"
             onClick={() => {
               void logout().then(() => navigate("/"));
@@ -120,13 +120,13 @@ export function AppShell() {
           >
             {compact ? "Out" : "Sign out"}
           </button>
-          <Link to="/app/settings" className="inline-flex min-h-9 items-center rounded-full border border-line px-3 py-1.5 text-xs transition hover:bg-muted" title="Settings">
+          <Link to="/app/settings" className="ui-chip-3d inline-flex min-h-9 items-center rounded-full border border-line px-3 py-1.5 text-xs" title="Settings">
             {compact ? "Set" : "Settings"}
           </Link>
         </div>
         <button
           type="button"
-          className="mt-3 hidden min-h-9 w-full items-center justify-center gap-2 rounded-full border border-line px-3 py-1.5 text-xs transition hover:bg-muted md:inline-flex"
+          className="ui-chip-3d mt-3 hidden min-h-9 w-full items-center justify-center gap-2 rounded-full border border-line px-3 py-1.5 text-xs md:inline-flex"
           onClick={() => setCollapsed((value) => !value)}
           aria-pressed={collapsed}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -139,8 +139,8 @@ export function AppShell() {
   );
 
   return (
-    <div className={`app-bg h-dvh overflow-hidden text-ink md:grid ${collapsed ? "md:grid-cols-[4.75rem_minmax(0,1fr)]" : "md:grid-cols-[17.5rem_minmax(0,1fr)]"}`}>
-      <aside className="sidebar-glass relative z-10 hidden border-r border-line transition-[width] duration-200 md:block">{nav(collapsed)}</aside>
+    <div className={`app-bg h-dvh overflow-hidden text-ink md:grid ${collapsed ? "md:grid-cols-[4.75rem_minmax(0,1fr)]" : "md:grid-cols-[15.625rem_minmax(0,1fr)]"}`}>
+      <aside className="sidebar-glass relative z-10 hidden border-r border-line/80 transition-[width] duration-200 md:block">{nav(collapsed)}</aside>
       <div className="relative z-10 flex h-dvh min-w-0 flex-col pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-0">
         <header className="flex items-center justify-between border-b border-line bg-elevated/90 px-4 py-3 backdrop-blur md:hidden">
           <button type="button" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full" aria-label="Open menu" onClick={() => setOpen(true)}>

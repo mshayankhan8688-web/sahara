@@ -4,10 +4,16 @@ import { textDirection } from "@/lib/speech";
 
 export function Mark({ className = "h-8 w-8" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="none" stroke="currentColor" strokeWidth="1.4" />
-      <circle cx="13" cy="16" r="4" fill="currentColor" />
-      <circle cx="20.5" cy="16" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    <svg viewBox="0 0 32 32" className={`mark-3d ${className}`} aria-hidden="true">
+      <defs>
+        <linearGradient id="sahara-mark-grad" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#e8b4b8" />
+          <stop offset="1" stopColor="#9b8ec4" />
+        </linearGradient>
+      </defs>
+      <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="none" stroke="url(#sahara-mark-grad)" strokeWidth="1.4" />
+      <circle cx="13" cy="16" r="4" fill="url(#sahara-mark-grad)" />
+      <circle cx="20.5" cy="16" r="3.2" fill="none" stroke="url(#sahara-mark-grad)" strokeWidth="1.4" />
     </svg>
   );
 }
@@ -16,7 +22,7 @@ export function Wordmark() {
   return (
     <span className="inline-flex items-center gap-2 text-ink">
       <Mark className="h-8 w-8 text-accent" />
-      <span className="font-serif text-[1.65rem] leading-none">SAHARA</span>
+      <span className="font-serif text-[1.65rem] leading-none tracking-tight">SAHARA</span>
     </span>
   );
 }
@@ -27,14 +33,14 @@ export function Button({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "danger" }) {
   const styles = {
-    primary: "bg-accent text-on-accent hover:opacity-90",
-    ghost: "border border-line bg-transparent text-ink hover:bg-muted",
+    primary: "btn-3d border-0",
+    ghost: "border border-line bg-transparent text-ink hover:bg-muted ui-chip-3d",
     danger: "border border-line text-accent hover:bg-accent-soft",
   }[variant];
   return (
     <button
       {...props}
-      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition duration-150 hover:-translate-y-px focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 ${styles} ${className}`}
+      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 ${styles} ${className}`}
     />
   );
 }

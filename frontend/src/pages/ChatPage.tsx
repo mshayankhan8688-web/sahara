@@ -22,13 +22,11 @@ import {
   Star,
 } from "lucide-react";
 import { ReplyLanguageSelect } from "@/components/ReplyLanguageSelect";
-import { CompanionAvatar, companionGreeting } from "@/components/CompanionAvatar";
-import { SaharaOrb } from "@/components/SaharaOrb";
+import { companionGreeting } from "@/components/CompanionAvatar";
 import { SafaPortrait } from "@/components/SafaPortrait";
 import { api, ApiError } from "@/lib/api";
 import {
   COMPANIONS_CHANGED,
-  companionAppearanceOf,
   readStoredCompanionId,
   writeStoredCompanionId,
 } from "@/lib/companions";
@@ -192,11 +190,11 @@ export function ChatPage() {
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speakToken = useRef(0);
 
-  const companionName = companion?.name?.trim() || "Safa";
-  const companionAppearance = companionAppearanceOf(companion);
-  const useSafaPortrait = companionAppearance === "female";
-  const greeting = companionGreeting(companionName, companionAppearance);
+  // Chat chrome stays Safa (second-reference UI). Appearance presets live on /app/companion only.
+  const companionName = "Safa";
+  const greeting = companionGreeting("Safa", "female");
   const portraitMood = pending ? "thinking" : listening ? "listening" : speakingId ? "speaking" : "idle";
+  const apiCompanionId = companionId || companion?.id || "";
 
   const stopSpeaking = () => {
     speakToken.current += 1;
@@ -331,9 +329,9 @@ export function ChatPage() {
           const list = result.companions;
           const saved = readStoredCompanionId();
           const savedMatch = list.find((item) => item.id === saved);
-          // Honor explicit selection / default; otherwise fall back to Safa, then first companion.
+          // Chat UI is always Safa; prefer the Safa companion record for API replies.
           const safa = list.find((item) => item.name.trim().toLowerCase() === "safa");
-          const fallback = savedMatch ?? list.find((item) => item.isDefault) ?? safa ?? list[0];
+          const fallback = safa ?? list.find((item) => item.isDefault) ?? savedMatch ?? list[0];
           if (fallback) {
             setCompanionId(fallback.id);
             setCompanion(fallback);
@@ -498,18 +496,18 @@ export function ChatPage() {
       const result =
         !regenerateOfMessageId && mode === "image"
           ? imageAction === "edit" && attachment
-            ? await api.editImage({ conversationId, companionId, prompt: content || "Improve this image.", image: attachment })
+            ? await api.editImage({ conversationId, companionId: apiCompanionId, prompt: content || "Improve this image.", image: attachment })
             : imageAction === "diagram"
-              ? await api.generateDiagram({ conversationId, companionId, prompt: content })
+              ? await api.generateDiagram({ conversationId, companionId: apiCompanionId, prompt: content })
               : await api.generateImage({
                   conversationId,
-                  companionId,
+                  companionId: apiCompanionId,
                   prompt: content,
                   purpose: /ppt|presentation|slide/i.test(content) ? "presentation" : /poster/i.test(content) ? "poster" : /diagram|biology|network|uml|study/i.test(content) ? "study" : "general",
                 })
           : await api.sendMessage({
               conversationId,
-              companionId,
+              companionId: apiCompanionId,
               content,
               attachment: attachment ?? undefined,
               journalId: regenerateOfMessageId ? undefined : journalId,
@@ -619,25 +617,26 @@ export function ChatPage() {
 
   const lastAssistantId = [...messages].reverse().find((message) => message.sender === "assistant" && message.kind === "ai")?.id;
 
-  const headerStatus = pending ? "Thinking…" : listening ? "Listening…" : speakingId ? "Speaking…" : "Online";
+  const headerStatus = pending ? "Thinking…" : listening ? "Listening…" : speakingId ? "Speaking…" : "ONLINE";
+  const statusIdle = headerStatus === "ONLINE";
 
   return (
     <section className="chat-shell flex h-full min-h-0 flex-col">
       <header className="chat-header flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <div className="relative hidden sm:block">
-            {useSafaPortrait ? (
-              <SafaPortrait className="h-12 w-12" mood={portraitMood} />
-            ) : (
-              <CompanionAvatar appearance={companionAppearance} name={companionName} className="h-12 w-12" mood={portraitMood} />
-            )}
+            <SafaPortrait className="h-12 w-12" mood={portraitMood} />
             <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-elevated bg-leaf" aria-hidden="true" />
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <p className="truncate font-serif text-xl leading-none text-ink sm:text-2xl">{companionName}</p>
               <AiMark />
-              <span className="rounded-full bg-lavender-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-lavender">
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                  statusIdle ? "bg-leaf/20 text-leaf" : "bg-lavender-soft text-lavender"
+                }`}
+              >
                 {headerStatus}
               </span>
             </div>
@@ -696,7 +695,7 @@ export function ChatPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <Link to="/app/chat" className="rounded-full border border-line px-3 py-1.5 text-xs font-semibold transition hover:border-accent hover:bg-accent-soft">
+          <Link to="/app/chat" className="ui-chip-3d rounded-full border border-line px-3 py-1.5 text-xs font-semibold hover:border-accent">
             New
           </Link>
           <ReplyLanguageSelect
@@ -710,7 +709,7 @@ export function ChatPage() {
           />
         </div>
       </header>
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-elevated/40 px-3 py-2 sm:gap-2 sm:px-6">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-line/80 bg-elevated/35 px-3 py-2 backdrop-blur-md sm:gap-2 sm:px-6">
         {MODE_META.map((item) => {
           const Icon = MODE_ICONS[item.id];
           return (
@@ -728,7 +727,7 @@ export function ChatPage() {
         })}
         <Link
           to={`/app/studio?mode=${mode === "general" || mode === "emotion" ? "study" : mode}`}
-          className="mode-tab ml-auto inline-flex items-center gap-1.5 bg-lavender-soft text-lavender hover:opacity-90"
+          className="btn-3d mode-tab ml-auto inline-flex items-center gap-1.5 text-on-accent"
         >
           <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
           Open Studio
@@ -782,12 +781,8 @@ export function ChatPage() {
         <div className="mx-auto flex max-w-3xl flex-col gap-5">
           {journalId ? <Alert>The selected journal entry will be sent with your next message. Nothing is shared until you press send.</Alert> : null}
           {messages.length === 0 ? (
-            <div className="glass-panel welcome-glow mx-auto flex w-full max-w-lg flex-col items-center px-6 py-10 text-center">
-              {useSafaPortrait ? (
-                <SafaPortrait className="h-32 w-32 sm:h-40 sm:w-40" mood={portraitMood} showHearts />
-              ) : (
-                <CompanionAvatar appearance={companionAppearance} name={companionName} className="h-32 w-32 sm:h-40 sm:w-40" mood={portraitMood} />
-              )}
+            <div className="glass-panel welcome-glow welcome-3d stage mx-auto flex w-full max-w-lg flex-col items-center px-6 py-10 text-center">
+              <SafaPortrait className="h-32 w-32 sm:h-40 sm:w-40" mood={portraitMood} showHearts />
               <h2 className="relative mt-5 font-serif text-3xl leading-tight sm:text-4xl">{greeting.title}</h2>
               <p className="relative mt-3 max-w-md text-sm leading-6 text-soft">
                 {greeting.body}
@@ -799,7 +794,7 @@ export function ChatPage() {
                   <button
                     key={starter}
                     type="button"
-                    className="chip text-left"
+                    className="chip ui-chip-3d text-left"
                     onClick={() => {
                       setError("");
                       setDraft(starter);
@@ -954,7 +949,7 @@ export function ChatPage() {
           ))}
           {pending ? (
             <div className="thinking-card chat-bubble" role="status">
-              <SaharaOrb className="h-10 w-10 shrink-0" mood="thinking" />
+              <SafaPortrait className="h-10 w-10 shrink-0" mood="thinking" />
               <div>
                 <p className="text-sm font-semibold">Thinking</p>
                 <p className="mt-0.5 inline-flex items-center gap-2 text-xs text-soft">
@@ -1093,7 +1088,7 @@ export function ChatPage() {
                   {listening ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </Button>
               </div>
-              <Button type="submit" aria-label="Send" disabled={pending || (draft.trim().length === 0 && !file)} className="h-11 min-w-11 rounded-full px-0 sm:min-w-[5.5rem] sm:px-4">
+              <Button type="submit" aria-label="Send" disabled={pending || (draft.trim().length === 0 && !file)} className="btn-3d h-11 min-w-11 rounded-full px-0 sm:min-w-[5.5rem] sm:px-4">
                 <Send className="h-4 w-4 sm:mr-1.5" />
                 <span className="hidden sm:inline">Send</span>
               </Button>
